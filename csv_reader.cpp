@@ -52,4 +52,14 @@ void csvReader::printRow(map<string, float> row)
     for (const auto &pair : row) {
         cout << pair.first << ": " << pair.second << " | ";
     }
+    cout<<endl;
+}
+
+// Function to print headers
+void csvReader::printHeaders(map<string, float> row) 
+{
+    for (const auto &pair : row) {
+        cout << pair.first << " | ";
+    }
+    cout<<endl;
 }

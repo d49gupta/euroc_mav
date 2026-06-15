@@ -14,6 +14,7 @@ public:
     vector<string> split(const string &str, char delimiter);
     void readCSV();
     void printRow(map<string, float> row);
+    void printHeaders(map<string, float> row);
     vector<map<string, float>> data;
 
 private:
