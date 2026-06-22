@@ -17,6 +17,8 @@ find_package(Eigen3 REQUIRED)
 
 add_executable(imu
   csv_reader.cpp
+  math_utils.cpp
+  ahrs.cpp
   main.cpp
 )
 

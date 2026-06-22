@@ -12,10 +12,9 @@ vector<string> csvReader::split(const string &str, char delimiter)
     return result;
 }
 
-// Function to read CSV and store the data
-void csvReader::readCSV() {
+// Function to read IMU CSV and store the data
+void IMUReader::readCSV() {
     ifstream file(this->filePath);
-    vector<map<string, float>> csv_vector;
 
     if (!file.is_open()) {
         cerr << "Failed to open file: " << this->filePath << endl;
@@ -24,42 +23,85 @@ void csvReader::readCSV() {
 
     string line;
     bool first_row = true;
-    vector<string> headers;
-
     // Read the file line by line
     while (getline(file, line)) {
         vector<string> row = split(line, ',');
 
         if (first_row) {
-            headers = row;
+            this->headers = row;
             first_row = false;
         } 
         else {
-            map<string, float> data_row; 
-            for (size_t i = 0; i < row.size(); ++i) {
-                data_row[headers[i]] = stof(row[i]);
-            }
-            this->data.push_back(data_row);
+            IMUSample sample;
+            sample.timestamp = stod(row[0]);
+            sample.gyro = Eigen::Vector3d(stod(row[1]), stod(row[2]), stod(row[3]));
+            sample.accel = Eigen::Vector3d(stod(row[4]), stod(row[5]), stod(row[6]));
+            data.push_back(sample);
         }
     }
 
     file.close();
 }
 
-// Function to print a row of data
-void csvReader::printRow(map<string, float> row) 
+// Function to print a row of IMU data
+void IMUReader::printRow() 
 {
-    for (const auto &pair : row) {
-        cout << pair.first << ": " << pair.second << " | ";
+    if (this->data.empty()) {
+        cout << "No data to print." << endl;
+        return;
     }
-    cout<<endl;
+
+    std::cout<< "Timestamp: " << this->data[0].timestamp << ", "
+             << "Gyro: [" << this->data[0].gyro.x() << ", " << this->data[0].gyro.y() << ", " << this->data[0].gyro.z() << "], "
+             << "Accel: [" << this->data[0].accel.x() << ", " << this->data[0].accel.y() << ", " << this->data[0].accel.z() << "]"
+             << std::endl;
 }
 
 // Function to print headers
-void csvReader::printHeaders(map<string, float> row) 
+void csvReader::printHeaders() 
 {
-    for (const auto &pair : row) {
-        cout << pair.first << " | ";
+    for (const auto &header : headers) {
+        cout << header << " | ";
     }
-    cout<<endl;
+    cout << endl;
+}
+
+void GTReader::readCSV() {
+    ifstream file(this->filePath);
+
+    if (!file.is_open()) {
+        cerr << "Failed to open file: " << this->filePath << endl;
+        return;
+    }
+
+    string line;
+    bool first_row = true;
+    // Read the file line by line
+    while (getline(file, line)) {
+        vector<string> row = split(line, ',');
+
+        if (first_row) {
+            this->headers = row;
+            first_row = false;
+        } 
+        else {
+            // sample.timestamp = stod(row[0]);
+            // sample.pos = Eigen::Vector3d(stod(row[1]), stod(row[2]), stod(row[3]));
+            Eigen::Quaterniond curr_orient = Eigen::Quaterniond(stod(row[4]), stod(row[5]), stod(row[6]), stod(row[7]));
+            // sample.vel = Eigen::Vector3d(stod(row[8]), stod(row[9]), stod(row[10]));
+            // sample.gyro_bias = Eigen::Vector3d(stod(row[11]), stod(row[12]), stod(row[13]));
+            // sample.accel_bias = Eigen::Vector3d(stod(row[14]), stod(row[15]), stod(row[16]));
+            gt_orient_data.push_back(curr_orient);
+        }
+    }
+
+    file.close();
+}
+
+void GTReader::printRow() 
+{
+    if (this->gt_orient_data.empty()) {
+        cout << "No data to print." << endl;
+        return;
+    }
 }
