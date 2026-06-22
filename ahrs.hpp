@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iomanip>
 #include <string>
+#include "filters.hpp"
 
 class BASE_AHRS
 {
@@ -114,6 +115,23 @@ class DEAD_RECKONING_AHRS : public BASE_AHRS
     private:
 };
 
+class MAHONY_AHRS : public BASE_AHRS
+{
+    public:
+        using BASE_AHRS::BASE_AHRS;
+        void ahrs_estimate() override;
+        void CHEBY_LP_FILT(IMUSample& data);
+        void MAHONY_FILT(IMUSample& data, Eigen::Quaterniond& q);
+
+    private:
+        Chebyshev2Filter filter_gyro_x;
+        Chebyshev2Filter filter_gyro_y;
+        Chebyshev2Filter filter_gyro_z;
+
+        Chebyshev2Filter filter_accel_x;
+        Chebyshev2Filter filter_accel_y;
+        Chebyshev2Filter filter_accel_z;
+};
 
 
 #endif
