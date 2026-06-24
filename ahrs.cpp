@@ -243,8 +243,8 @@ void MAHONY_AHRS::ahrs_estimate()
         q_curr.y() = q_last.y() + dt * 0.5 * ( q_last.w() * wy - q_last.x() * wz + q_last.z() * wx);
         q_curr.z() = q_last.z() + dt * 0.5 * ( q_last.w() * wz + q_last.x() * wy - q_last.y() * wx);
         q_curr.normalize();
-        Eigen::Vector3d euler_curr = quat_to_eulers(q_curr);
 
+        Eigen::Vector3d euler_curr = quat_to_eulers(q_curr);
         this->orient_estimate.push_back(q_curr);
         this->euler_estimate.push_back(euler_curr);
     }
@@ -261,4 +261,80 @@ void MAHONY_AHRS::MAHONY_FILT(IMUSample& data, double dt)
     this->error += error_axis * dt;
 
     data.gyro = (data.gyro - this->gyro_bias) + (kp * error_axis) + (ki * this->error);
+}
+
+void MADGWICK_AHRS::ahrs_estimate()
+{
+    Eigen::Quaterniond init_quat = init_orient();
+    this->orient_estimate.push_back(init_quat);
+
+    for (size_t i = 1; i < this->imu_data.size(); i++)
+    {
+        Eigen::Quaterniond q_gyro;
+        Eigen::Quaterniond q_last = this->orient_estimate.back();
+
+        uint64_t t_now = this->imu_data[i].timestamp;
+        uint64_t t_last = this->imu_data[i-1].timestamp;
+        double dt = static_cast<double>(t_now - t_last) / 1e9;
+
+        this->CHEBY_LP_FILT(imu_data[i]);
+
+        double wx = this->imu_data[i].gyro.x() - this->gyro_bias.x();
+        double wy = this->imu_data[i].gyro.y() - this->gyro_bias.y();
+        double wz = this->imu_data[i].gyro.z() - this->gyro_bias.z();
+
+        q_gyro.w() = q_last.w() + dt * 0.5 * (-q_last.x() * wx - q_last.y() * wy - q_last.z() * wz);
+        q_gyro.x() = q_last.x() + dt * 0.5 * ( q_last.w() * wx + q_last.y() * wz - q_last.z() * wy);
+        q_gyro.y() = q_last.y() + dt * 0.5 * ( q_last.w() * wy - q_last.x() * wz + q_last.z() * wx);
+        q_gyro.z() = q_last.z() + dt * 0.5 * ( q_last.w() * wz + q_last.x() * wy - q_last.y() * wx);
+        q_gyro.normalize();
+
+        double gyro_mag = sqrt(wx*wx + wy*wy + wz*wz);
+        Eigen::Quaterniond q_madgwick = Eigen::Quaterniond::Identity();
+        double step_size = this->alpha * gyro_mag * dt;
+        this->MADGWICK_FILT(imu_data[i], q_madgwick, step_size);
+
+        Eigen::Quaterniond q_fused = q_gyro.slerp(0.5, q_madgwick); 
+        Eigen::Vector3d euler_curr = quat_to_eulers(q_fused);
+        this->orient_estimate.push_back(q_fused);
+        this->euler_estimate.push_back(euler_curr);
+    }
+}
+
+void MADGWICK_AHRS::MADGWICK_FILT(IMUSample& data, Eigen::Quaterniond& q_madgwick, double step_size)
+{
+    Eigen::Quaterniond q_prev = this->orient_estimate.back();
+    Eigen::Vector3d v_world(0.0, 0.0, 1.0);
+    Eigen::Vector3d v_pred = q_prev.conjugate() * v_world;
+    Eigen::Vector3d accel_norm = data.accel.normalized();
+    Eigen::Vector3d residual = v_pred - accel_norm;
+
+    double w = q_prev.w();
+    double x = q_prev.x();
+    double y = q_prev.y();
+    double z = q_prev.z();
+
+    Eigen::Matrix<double, 3, 4> J;
+    J(0, 0) = -2.0 * y;
+    J(0, 1) =  2.0 * z;
+    J(0, 2) = -2.0 * w;
+    J(0, 3) =  2.0 * x;
+
+    J(1, 0) =  2.0 * x;
+    J(1, 1) =  2.0 * w;
+    J(1, 2) =  2.0 * z;
+    J(1, 3) =  2.0 * y;
+
+    J(2, 0) =  0.0;
+    J(2, 1) = -4.0 * x;
+    J(2, 2) = -4.0 * y;
+    J(2, 3) =  0.0;
+
+    Eigen::Vector4d gradient = J.transpose() * residual;
+    gradient.normalize();
+    q_madgwick.w() = w - step_size * gradient(0);
+    q_madgwick.x() = x - step_size * gradient(1);
+    q_madgwick.y() = y - step_size * gradient(2);
+    q_madgwick.z() = z - step_size * gradient(3);
+    q_madgwick.normalize();
 }

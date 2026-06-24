@@ -79,6 +79,15 @@ class MAHONY_AHRS : public BASE_AHRS
         Eigen::Vector3d error = Eigen::Vector3d::Zero();
 };
 
+class MADGWICK_AHRS : public BASE_AHRS
+{
+    public:
+        MADGWICK_AHRS(const std::vector<IMUSample>& imu_data) : BASE_AHRS(imu_data) {}
+        void ahrs_estimate() override;
+        void MADGWICK_FILT(IMUSample& data, Eigen::Quaterniond& q_madgwick, double step_size);
 
+    private:
+        double alpha = 10.0;
+};
 
 #endif
