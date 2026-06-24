@@ -20,6 +20,7 @@ void eulers_to_quat(const Eigen::Vector3d& eulers, Eigen::Quaterniond& quat)
     quat.x() = sinphi2 * costheta2 * cospsi2 - cosphi2 * sintheta2 * sinpsi2;
     quat.y() = cosphi2 * sintheta2 * cospsi2 + sinphi2 * costheta2 * sinpsi2;
     quat.z() = cosphi2 * costheta2 * sinpsi2 - sinphi2 * sintheta2 * cospsi2;
+    quat.normalize();
 }
 
 void SLERP_v4(Eigen::Quaterniond& a, const Eigen::Quaterniond& b, float gain)
@@ -69,4 +70,51 @@ double yaw_from_quat(const Eigen::Quaterniond& q)
     double yaw = std::atan2(siny_cosp, cosy_cosp);
 
     return yaw;
+}
+
+void SLERP_v3(Eigen::Vector3d& a, const Eigen::Vector3d& b, double gain)
+{
+    if (gain > 1.0 || gain < 0.0)
+        return;
+
+    // 1. We must operate on normalized vectors for geometric angular interpolation
+    Eigen::Vector3d a_norm = a.normalized();
+    Eigen::Vector3d b_norm = b.normalized();
+
+    // 2. Compute the dot product between the directional vectors
+    double dp = a_norm.dot(b_norm);
+
+    // 3. Clamp to prevent floating-point rounding errors from causing acos() to return NaN
+    dp = std::fmin(std::fmax(dp, -1.0), 1.0);
+    
+    double ang = std::acos(dp);
+    double sin3_ang = std::sin(ang);
+
+    // 4. Check for division-by-zero singularity (when vectors are virtually parallel)
+    if (std::abs(sin3_ang) > 0.0001)
+    {
+        double sin1_ang = std::sin((1.0 - gain) * ang);
+        double sin2_ang = std::sin(gain * ang);
+
+        // Compute the interpolated directional vector safely into a temporary object
+        Eigen::Vector3d res_dir = (a_norm * sin1_ang + b_norm * sin2_ang) / sin3_ang;
+
+        // 5. Scale the directional vector back to match the interpolated magnitude
+        double mag = (1.0 - gain) * a.norm() + gain * b.norm();
+        
+        a = res_dir * mag;
+    }
+    else
+    {
+        // Fallback: If the angle is near 0, standard LERP matches SLERP perfectly
+        a = (1.0 - gain) * a + gain * b;
+    }
+}
+Eigen::Vector3d quat_to_eulers(const Eigen::Quaterniond q_curr)
+{
+    double roll  = std::atan2(2.0 * (q_curr.w() * q_curr.x() + q_curr.y() * q_curr.z()), 1.0 - 2.0 * (q_curr.x() * q_curr.x() + q_curr.y() * q_curr.y()));
+    double pitch = std::asin(std::fmin(std::fmax(2.0 * (q_curr.w() * q_curr.y() - q_curr.z() * q_curr.x()), -1.0), 1.0));
+    double yaw   = std::atan2(2.0 * (q_curr.w() * q_curr.z() + q_curr.x() * q_curr.y()), 1.0 - 2.0 * (q_curr.y() * q_curr.y() + q_curr.z() * q_curr.z()));
+    Eigen::Vector3d euler(roll, pitch, yaw);
+    return euler;
 }

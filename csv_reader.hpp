@@ -10,6 +10,7 @@
 #include <cmath>
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
+#include "math_utils.hpp"
 
 using namespace std;
 
@@ -52,5 +53,6 @@ class GTReader : public csvReader
         void printRow() override;
 
         vector<Eigen::Quaterniond> gt_orient_data;
+        vector<Eigen::Vector3d> gt_euler_data;
 };
 #endif

@@ -19,5 +19,7 @@ const Eigen::Vector3d GRAV_VEC(0.0f, 0.0f, 9.81f);
 void eulers_to_quat(const Eigen::Vector3d& eulers, Eigen::Quaterniond& quat);
 void SLERP_v4(Eigen::Quaterniond& a, const Eigen::Quaterniond& b, float gain);
 double yaw_from_quat(const Eigen::Quaterniond& q);
+void SLERP_v3(Eigen::Vector3d& a, const Eigen::Vector3d& b, double gain);
+Eigen::Vector3d quat_to_eulers(const Eigen::Quaterniond q);
 
 #endif

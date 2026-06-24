@@ -52,12 +52,13 @@ class BASE_AHRS
             Eigen::Vector3d init_euler(roll, pitch, yaw);
             Eigen::Quaterniond init_quat;
             eulers_to_quat(init_euler, init_quat);
+            // std::cout<<init_quat.w()<<" "<<init_quat.x()<<" "<<init_quat.y()<<" "<<init_quat.z()<<std::endl;
 
             this->q_align = this->q_gt_0 * init_quat.conjugate();
             Eigen::Quaterniond q_init_align = this->q_align * init_quat;
             q_init_align.normalize();
 
-            std::cout<<q_init_align.w()<<" "<<q_init_align.x()<<" "<<q_init_align.y()<<" "<<q_init_align.z()<<std::endl;
+            // std::cout<<q_init_align.w()<<" "<<q_init_align.x()<<" "<<q_init_align.y()<<" "<<q_init_align.z()<<std::endl;
             return q_init_align;
         }
 
@@ -98,11 +99,51 @@ class BASE_AHRS
                         << q_est.w() << ","
                         << angle_error_deg << "\n";
             }
+        }
+
+        double get_shortest_angle_error(double estimate, double ground_truth) 
+        {
+            double diff = estimate - ground_truth;
+            double tmp = std::atan2(std::sin(diff), std::cos(diff)); // wrap angle between +- pi by finding shortest path
+            // between two headings in circle
+            return abs(tmp * (180.0 / M_PI));
+        }
+
+        void euler_error(const std::string& filename, const std::vector<Eigen::Vector3d>& euler1,
+                                    const std::vector<Eigen::Vector3d>& euler2) 
+        {
+            std::ofstream csv_file(filename);
+
+            if (!csv_file.is_open()) 
+            {
+                std::cerr << "Error: Could not open file " << filename << " for writing!" << std::endl;
+                return;
+            }
+
+            csv_file << "roll,pitch,yaw\n";
+            csv_file << std::fixed << std::setprecision(6);
+
+            size_t loop_size = std::min(euler1.size(), euler2.size());
+
+            for (size_t i = 0; i < loop_size; ++i) 
+            {
+                Eigen::Vector3d orient1 = euler1[i];
+                Eigen::Vector3d orient2 = euler2[i];
+
+                double roll_diff = get_shortest_angle_error(orient1.x(), orient2.x());
+                double pitch_diff = get_shortest_angle_error(orient1.y(), orient2.y());
+                double yaw_diff = get_shortest_angle_error(orient1.z(), orient2.z());
+
+                csv_file << roll_diff << ","
+                        << pitch_diff << ","
+                        << yaw_diff << "\n";
+            }
 
             csv_file.close();
         }
 
         virtual ~BASE_AHRS() = default; // abstract class has one or more virtual functions
+        std::vector<Eigen::Vector3d> euler_estimate;
 
 };
 
@@ -122,6 +163,8 @@ class MAHONY_AHRS : public BASE_AHRS
         void ahrs_estimate() override;
         void CHEBY_LP_FILT(IMUSample& data);
         void MAHONY_FILT(IMUSample& data, Eigen::Quaterniond& q);
+        void COMPLEMENTARY_FILT(IMUSample& data, Eigen::Quaterniond& q);
+        void GYRO_CORRECT(IMUSample& data, double dt);
 
     private:
         Chebyshev2Filter filter_gyro_x;
