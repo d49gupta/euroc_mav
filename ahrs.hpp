@@ -19,6 +19,9 @@ class BASE_AHRS
         Eigen::Quaterniond q_gt_0{0.060514, -0.828459, -0.058956, -0.553641}; // use {} for init in header
     
     public:
+        std::vector<Eigen::Vector3d> euler_estimate;
+
+
         BASE_AHRS(const std::vector<IMUSample>&data) : imu_data(data), 
                     accel_bias(Eigen::Vector3d::Zero()), gyro_bias(Eigen::Vector3d::Zero()) 
         {
@@ -106,7 +109,7 @@ class BASE_AHRS
             double diff = estimate - ground_truth;
             double tmp = std::atan2(std::sin(diff), std::cos(diff)); // wrap angle between +- pi by finding shortest path
             // between two headings in circle
-            return abs(tmp * (180.0 / M_PI));
+            return tmp * (180.0 / M_PI);
         }
 
         void euler_error(const std::string& filename, const std::vector<Eigen::Vector3d>& euler1,
@@ -143,8 +146,6 @@ class BASE_AHRS
         }
 
         virtual ~BASE_AHRS() = default; // abstract class has one or more virtual functions
-        std::vector<Eigen::Vector3d> euler_estimate;
-
 };
 
 class DEAD_RECKONING_AHRS : public BASE_AHRS
@@ -162,7 +163,6 @@ class MAHONY_AHRS : public BASE_AHRS
         using BASE_AHRS::BASE_AHRS;
         void ahrs_estimate() override;
         void CHEBY_LP_FILT(IMUSample& data);
-        void MAHONY_FILT(IMUSample& data, Eigen::Quaterniond& q);
         void COMPLEMENTARY_FILT(IMUSample& data, Eigen::Quaterniond& q);
         void GYRO_CORRECT(IMUSample& data, double dt);
 

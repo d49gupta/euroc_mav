@@ -25,7 +25,9 @@ void DEAD_RECKONING_AHRS::ahrs_estimate()
         q_curr.z() = q_last.z() + dt * 0.5 * ( q_last.w() * wz + q_last.x() * wy - q_last.y() * wx);
 
         q_curr.normalize();
+        Eigen::Vector3d euler_curr = quat_to_eulers(q_curr);
         this->orient_estimate.push_back(q_curr);
+        this->euler_estimate.push_back(euler_curr);
     }
 
     return;
@@ -84,7 +86,7 @@ void MAHONY_AHRS::COMPLEMENTARY_FILT(IMUSample& data, Eigen::Quaterniond& q)
     Eigen::Quaterniond q_target_align = this->q_align * q_target;
     q_target_align.normalize();
 
-    q = q.slerp(0.01, q_target_align); 
+    q = q.slerp(0.05, q_target_align); 
     q.normalize();
     return;
 }
@@ -103,23 +105,6 @@ void MAHONY_AHRS::CHEBY_LP_FILT(IMUSample& data)
     data.accel = Eigen::Vector3d(clean_ax, clean_ay, clean_az);
 }
 
-void MAHONY_AHRS::MAHONY_FILT(IMUSample& data, Eigen::Quaterniond& q)
-{
-    double accel_mag = data.accel.norm();
-    double confidence = clamp((1.0 - fabs(accel_mag - GRAV) / GRAV), 0.0, 1.0) * 1.0; 
-
-    Eigen::Vector3d a_meas = data.accel.normalized();
-    double roll = atan2(a_meas.y(), a_meas.z());
-    double pitch = atan2(-a_meas.x(), sqrt(a_meas.y()*a_meas.y() + a_meas.z()*a_meas.z()));
-    double yaw = yaw_from_quat(q);
-
-    Eigen::Vector3d euler_accel(roll, pitch, yaw);
-    Eigen::Quaterniond q_accel = Eigen::Quaterniond::Identity();
-    eulers_to_quat(euler_accel, q_accel);
-    SLERP_v4(q, q_accel, confidence);
-    q.normalize();
-    return;
-}
 
 void MAHONY_AHRS::GYRO_CORRECT(IMUSample& data, double dt)
 {
