@@ -290,19 +290,36 @@ void MADGWICK_AHRS::ahrs_estimate()
         q_gyro.normalize();
 
         double gyro_mag = sqrt(wx*wx + wy*wy + wz*wz);
-        Eigen::Quaterniond q_madgwick = Eigen::Quaterniond::Identity();
         double step_size = this->alpha * gyro_mag * dt;
-        this->MADGWICK_FILT(imu_data[i], q_madgwick, step_size);
-
-        Eigen::Quaterniond q_fused = q_gyro.slerp(0.5, q_madgwick); 
-        Eigen::Vector3d euler_curr = quat_to_eulers(q_fused);
-        this->orient_estimate.push_back(q_fused);
+        this->MADGWICK_FILT(imu_data[i], q_gyro, step_size);
+ 
+        Eigen::Vector3d euler_curr = quat_to_eulers(q_gyro);
+        this->orient_estimate.push_back(q_gyro);
         this->euler_estimate.push_back(euler_curr);
     }
 }
 
-void MADGWICK_AHRS::MADGWICK_FILT(IMUSample& data, Eigen::Quaterniond& q_madgwick, double step_size)
+void MADGWICK_AHRS::MADGWICK_FILT(IMUSample& data, Eigen::Quaterniond& q_gyro, double step_size)
 {
+
+    double a_mag = data.accel.norm();
+    double accel_error = std::abs(a_mag - GRAV);
+
+    const double LOWER_BOUND = 0.15;
+    const double UPPER_BOUND = 0.55;
+
+    double trust_factor = 1.0;
+    if (accel_error <= LOWER_BOUND) {
+        trust_factor = 1.0;
+    } else if (accel_error >= UPPER_BOUND) {
+        trust_factor = 0.0;
+    } else {
+        trust_factor = 1.0 - ((accel_error - LOWER_BOUND) / (UPPER_BOUND - LOWER_BOUND)); // linear interpolation
+    }
+
+    double active_slerp_gain = 0.75 * trust_factor;
+    double active_step_size  = step_size  * trust_factor;
+
     Eigen::Quaterniond q_prev = this->orient_estimate.back();
     Eigen::Vector3d v_world(0.0, 0.0, 1.0);
     Eigen::Vector3d v_pred = q_prev.conjugate() * v_world;
@@ -332,9 +349,14 @@ void MADGWICK_AHRS::MADGWICK_FILT(IMUSample& data, Eigen::Quaterniond& q_madgwic
 
     Eigen::Vector4d gradient = J.transpose() * residual;
     gradient.normalize();
-    q_madgwick.w() = w - step_size * gradient(0);
-    q_madgwick.x() = x - step_size * gradient(1);
-    q_madgwick.y() = y - step_size * gradient(2);
-    q_madgwick.z() = z - step_size * gradient(3);
+    Eigen::Quaterniond q_madgwick = Eigen::Quaterniond::Identity();
+    q_madgwick.w() = w - active_step_size * gradient(0);
+    q_madgwick.x() = x - active_step_size * gradient(1);
+    q_madgwick.y() = y - active_step_size * gradient(2);
+    q_madgwick.z() = z - active_step_size * gradient(3);
     q_madgwick.normalize();
+    Eigen::Vector3d euler_madgwick = quat_to_eulers(q_madgwick);
+    this->euler_correct.push_back(euler_madgwick);
+
+    q_gyro = q_gyro.slerp(active_slerp_gain, q_madgwick);
 }

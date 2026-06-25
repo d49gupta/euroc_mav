@@ -27,6 +27,7 @@ class BASE_AHRS
         Eigen::Vector3d gyro_bias;
         std::vector<Eigen::Quaterniond> orient_estimate;
         std::vector<Eigen::Vector3d> euler_estimate;
+        std::vector<Eigen::Vector3d> euler_correct;
 
         virtual void ahrs_estimate() = 0; // set virtual functions to 0, destructor/constructor to defualt
         // ahrs_estimate will calculate current orientation estimate, append to ahrs_estimate
@@ -84,10 +85,10 @@ class MADGWICK_AHRS : public BASE_AHRS
     public:
         MADGWICK_AHRS(const std::vector<IMUSample>& imu_data) : BASE_AHRS(imu_data) {}
         void ahrs_estimate() override;
-        void MADGWICK_FILT(IMUSample& data, Eigen::Quaterniond& q_madgwick, double step_size);
+        void MADGWICK_FILT(IMUSample& data, Eigen::Quaterniond& q, double step_size);
 
     private:
-        double alpha = 10.0;
+        double alpha = 15.0;
 };
 
 #endif
