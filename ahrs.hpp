@@ -49,6 +49,8 @@ class BASE_AHRS
             this->euler_estimate.clear();
             this->euler_estimate.reserve(this->imu_data.size());
         }
+        Eigen::Quaterniond align_quat(Eigen::Quaterniond& q);
+        void align_estimate();
 };
 
 class DEAD_RECKONING_AHRS : public BASE_AHRS

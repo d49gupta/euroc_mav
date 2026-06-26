@@ -30,11 +30,21 @@ Eigen::Quaterniond BASE_AHRS::init_orient(size_t num_samples)
     // std::cout<<init_quat.w()<<" "<<init_quat.x()<<" "<<init_quat.y()<<" "<<init_quat.z()<<std::endl;
 
     this->q_align = this->q_gt_0 * init_quat.conjugate();
-    Eigen::Quaterniond q_init_align = this->q_align * init_quat;
-    q_init_align.normalize();
+    // Eigen::Quaterniond q_init_align = this->q_align * init_quat;
+    // q_init_align.normalize();
 
-    // std::cout<<q_init_align.w()<<" "<<q_init_align.x()<<" "<<q_init_align.y()<<" "<<q_init_align.z()<<std::endl;
-    return q_init_align;
+    this->orient_estimate.push_back(init_quat);
+    // Eigen::Vector3d euler_curr = quat_to_eulers(q_curr);
+    // this->euler_estimate.push_back(euler_curr);
+
+    return init_quat;
+}
+
+Eigen::Quaterniond BASE_AHRS::align_quat(Eigen::Quaterniond& q)
+{
+    Eigen::Quaterniond q_aligned = this->q_align * q;
+    q_aligned.normalize();
+    return q_aligned;
 }
 
 void BASE_AHRS::quat_error(const std::string& filename, const std::vector<Eigen::Quaterniond>& gt_trajectory) 
@@ -131,7 +141,6 @@ void BASE_AHRS::CHEBY_LP_FILT(IMUSample& data)
 void DEAD_RECKONING_AHRS::ahrs_estimate()
 {
     Eigen::Quaterniond init_quat = init_orient();
-    this->orient_estimate.push_back(init_quat);
 
     for (size_t i = 1; i < this->imu_data.size(); i++)
     {
@@ -152,10 +161,11 @@ void DEAD_RECKONING_AHRS::ahrs_estimate()
         q_curr.z() = q_last.z() + dt * 0.5 * ( q_last.w() * wz + q_last.x() * wy - q_last.y() * wx);
 
         q_curr.normalize();
-        Eigen::Vector3d euler_curr = quat_to_eulers(q_curr);
+        // Eigen::Vector3d euler_curr = quat_to_eulers(q_curr);
+        // this->euler_estimate.push_back(euler_curr);
         this->orient_estimate.push_back(q_curr);
-        this->euler_estimate.push_back(euler_curr);
     }
+    this->align_estimate();
 
     return;
 }
@@ -163,7 +173,6 @@ void DEAD_RECKONING_AHRS::ahrs_estimate()
 void COMPLEMENTARY_AHRS::ahrs_estimate()
 {
     Eigen::Quaterniond init_quat = init_orient();
-    this->orient_estimate.push_back(init_quat);
 
     for (size_t i = 1; i < this->imu_data.size(); i++)
     {
@@ -184,13 +193,13 @@ void COMPLEMENTARY_AHRS::ahrs_estimate()
         q_curr.y() = q_last.y() + dt * 0.5 * ( q_last.w() * wy - q_last.x() * wz + q_last.z() * wx);
         q_curr.z() = q_last.z() + dt * 0.5 * ( q_last.w() * wz + q_last.x() * wy - q_last.y() * wx);
         q_curr.normalize();
-        Eigen::Vector3d euler_curr = quat_to_eulers(q_curr);
 
         this->COMPLEMENTARY_FILT(imu_data[i], q_curr);
         this->orient_estimate.push_back(q_curr);
-        this->euler_estimate.push_back(euler_curr);
+        // Eigen::Vector3d euler_curr = quat_to_eulers(q_curr);
+        // this->euler_estimate.push_back(euler_curr);
     }
-
+    this->align_estimate();
     return;
 }
 
@@ -209,10 +218,8 @@ void COMPLEMENTARY_AHRS::COMPLEMENTARY_FILT(IMUSample& data, Eigen::Quaterniond&
 
     Eigen::Quaterniond q_target = Eigen::Quaterniond::Identity();
     eulers_to_quat(euler_target, q_target);
-    Eigen::Quaterniond q_target_align = this->q_align * q_target; // align body frame orietnation with vicon world frame
-    q_target_align.normalize();
 
-    q = q.slerp(0.05, q_target_align); 
+    q = q.slerp(0.05, q_target); 
     q.normalize();
     return;
 }
@@ -220,7 +227,6 @@ void COMPLEMENTARY_AHRS::COMPLEMENTARY_FILT(IMUSample& data, Eigen::Quaterniond&
 void MAHONY_AHRS::ahrs_estimate()
 {
     Eigen::Quaterniond init_quat = init_orient();
-    this->orient_estimate.push_back(init_quat);
 
     for (size_t i = 1; i < this->imu_data.size(); i++)
     {
@@ -244,10 +250,11 @@ void MAHONY_AHRS::ahrs_estimate()
         q_curr.z() = q_last.z() + dt * 0.5 * ( q_last.w() * wz + q_last.x() * wy - q_last.y() * wx);
         q_curr.normalize();
 
-        Eigen::Vector3d euler_curr = quat_to_eulers(q_curr);
+        // Eigen::Vector3d euler_curr = quat_to_eulers(q_curr);
+        // this->euler_estimate.push_back(euler_curr);
         this->orient_estimate.push_back(q_curr);
-        this->euler_estimate.push_back(euler_curr);
     }
+    this->align_estimate();
 }
 
 void MAHONY_AHRS::MAHONY_FILT(IMUSample& data, double dt)
@@ -266,7 +273,6 @@ void MAHONY_AHRS::MAHONY_FILT(IMUSample& data, double dt)
 void MADGWICK_AHRS::ahrs_estimate()
 {
     Eigen::Quaterniond init_quat = init_orient();
-    this->orient_estimate.push_back(init_quat);
 
     for (size_t i = 1; i < this->imu_data.size(); i++)
     {
@@ -293,10 +299,11 @@ void MADGWICK_AHRS::ahrs_estimate()
         double step_size = this->alpha * gyro_mag * dt;
         this->MADGWICK_FILT(imu_data[i], q_gyro, step_size);
  
-        Eigen::Vector3d euler_curr = quat_to_eulers(q_gyro);
+        // Eigen::Vector3d euler_curr = quat_to_eulers(q_gyro);
+        // this->euler_estimate.push_back(euler_curr);
         this->orient_estimate.push_back(q_gyro);
-        this->euler_estimate.push_back(euler_curr);
     }
+    this->align_estimate();
 }
 
 void MADGWICK_AHRS::MADGWICK_FILT(IMUSample& data, Eigen::Quaterniond& q_gyro, double step_size)
@@ -367,7 +374,6 @@ void MADGWICK_AHRS::MADGWICK_FILT(IMUSample& data, Eigen::Quaterniond& q_gyro, d
 void EKF_AHRS::ahrs_estimate()
 {
     Eigen::Quaterniond init_quat = init_orient();
-    this->orient_estimate.push_back(init_quat);
     this->gyro_bias_estimate.push_back(gyro_bias);
     this->init_params();
 
@@ -381,6 +387,7 @@ void EKF_AHRS::ahrs_estimate()
         this->predict(imu_data[i], dt);
         this->correct(imu_data[i]);
     }
+    this->align_estimate();
 }
 
 void EKF_AHRS::predict(IMUSample& data, double dt)
@@ -476,9 +483,9 @@ void EKF_AHRS::correct(IMUSample& data)
     Eigen::Vector3d curr_gyro_bias(this->x(4), this->x(5), this->x(6));
     this->gyro_bias_estimate.push_back(curr_gyro_bias);
 
-    Eigen::Vector3d euler_curr = quat_to_eulers(q_updated);
+    // Eigen::Vector3d euler_curr = quat_to_eulers(q_updated);
+    // this->euler_estimate.push_back(euler_curr);
     this->orient_estimate.push_back(q_updated);
-    this->euler_estimate.push_back(euler_curr);
 
     this->x.head<4>() = Eigen::Vector4d(q_updated.w(), q_updated.x(), q_updated.y(), q_updated.z());
     Eigen::Matrix<double, 7, 7> I = Eigen::Matrix<double, 7, 7>::Identity();
@@ -503,4 +510,14 @@ void EKF_AHRS::init_params()
     this->A = Eigen::MatrixXd::Identity(7, 7);
     this->H = Eigen::Matrix<double, 3, 7>::Zero();
     this->R = Eigen::MatrixXd::Identity(3, 3) * sigma_accel_sq;
+}
+
+void BASE_AHRS::align_estimate()
+{
+    for (size_t i = 0; i < this->orient_estimate.size(); i++)
+    {
+        this->orient_estimate[i] = this->q_align * this->orient_estimate[i];
+        Eigen::Vector3d euler_curr = quat_to_eulers(this->orient_estimate[i]);
+        this->euler_estimate.push_back(euler_curr);
+    }
 }
