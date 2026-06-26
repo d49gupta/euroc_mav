@@ -54,5 +54,6 @@ class GTReader : public csvReader
 
         vector<Eigen::Quaterniond> gt_orient_data;
         vector<Eigen::Vector3d> gt_euler_data;
+        vector<Eigen::Vector3d> gt_gyro_bias;
 };
 #endif

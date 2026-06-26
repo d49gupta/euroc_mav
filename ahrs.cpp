@@ -81,7 +81,7 @@ double BASE_AHRS::get_shortest_angle_error(double estimate, double ground_truth)
     return tmp * (180.0 / M_PI);
 }
 
-void BASE_AHRS::euler_error(const std::string& filename, const std::vector<Eigen::Vector3d>& euler1,
+void BASE_AHRS::vec_error(const std::string& filename, const std::vector<Eigen::Vector3d>& euler1,
                             const std::vector<Eigen::Vector3d>& euler2) 
 {
     std::ofstream csv_file(filename);
@@ -322,9 +322,12 @@ void MADGWICK_AHRS::MADGWICK_FILT(IMUSample& data, Eigen::Quaterniond& q_gyro, d
 
     Eigen::Quaterniond q_prev = this->orient_estimate.back();
     Eigen::Vector3d v_world(0.0, 0.0, 1.0);
-    Eigen::Vector3d v_pred = q_prev.conjugate() * v_world;
+    Eigen::Vector3d v_pred = q_prev.conjugate() * v_world; // at t=1 q_prev is aleady aligned with vicon world frame into body frame
+    // so taking residual of v_world in body frame matches teh same frame as the accel vector which is in body frame
     Eigen::Vector3d accel_norm = data.accel.normalized();
     Eigen::Vector3d residual = v_pred - accel_norm;
+    // Since for small angles sin theta = theta, if you pass in cross product error like in mahony instead of residual
+    // you would still be proportionally minimizing the error
 
     double w = q_prev.w();
     double x = q_prev.x();
@@ -359,4 +362,145 @@ void MADGWICK_AHRS::MADGWICK_FILT(IMUSample& data, Eigen::Quaterniond& q_gyro, d
     this->euler_correct.push_back(euler_madgwick);
 
     q_gyro = q_gyro.slerp(active_slerp_gain, q_madgwick);
+}
+
+void EKF_AHRS::ahrs_estimate()
+{
+    Eigen::Quaterniond init_quat = init_orient();
+    this->orient_estimate.push_back(init_quat);
+    this->gyro_bias_estimate.push_back(gyro_bias);
+    this->init_params();
+
+    for (size_t i = 1; i < this->imu_data.size(); i++)
+    {
+        this->CHEBY_LP_FILT(imu_data[i]);
+        uint64_t t_now = this->imu_data[i].timestamp;
+        uint64_t t_last = this->imu_data[i-1].timestamp;
+        double dt = static_cast<double>(t_now - t_last) / 1e9;
+
+        this->predict(imu_data[i], dt);
+        this->correct(imu_data[i]);
+    }
+}
+
+void EKF_AHRS::predict(IMUSample& data, double dt)
+{
+    Eigen::Quaterniond q_last(this->x(0), this->x(1), this->x(2), this->x(3));
+
+    double wx = data.gyro.x() - this->x(4);
+    double wy = data.gyro.y() - this->x(5);
+    double wz = data.gyro.z() - this->x(6);
+
+    Eigen::Quaterniond q_gyro;
+    q_gyro.w() = q_last.w() + dt * 0.5 * (-q_last.x() * wx - q_last.y() * wy - q_last.z() * wz);
+    q_gyro.x() = q_last.x() + dt * 0.5 * ( q_last.w() * wx + q_last.y() * wz - q_last.z() * wy);
+    q_gyro.y() = q_last.y() + dt * 0.5 * ( q_last.w() * wy - q_last.x() * wz + q_last.z() * wx);
+    q_gyro.z() = q_last.z() + dt * 0.5 * ( q_last.w() * wz + q_last.x() * wy - q_last.y() * wx);
+    q_gyro.normalize();
+    this->x.head<4>() = Eigen::Vector4d(q_gyro.w(), q_gyro.x(), q_gyro.y(), q_gyro.z());
+
+    double half_dt = dt * 0.5;
+    // --- Top-Left Block (4x4): Quaternion w.r.t Quaternion ---
+    this->A(0, 1) = -half_dt * wx;
+    this->A(0, 2) = -half_dt * wy;
+    this->A(0, 3) = -half_dt * wz;
+
+    this->A(1, 0) =  half_dt * wx;
+    this->A(1, 2) =  half_dt * wz;
+    this->A(1, 3) = -half_dt * wy;
+
+    this->A(2, 0) =  half_dt * wy;
+    this->A(2, 1) = -half_dt * wz;
+    this->A(2, 3) =  half_dt * wx;
+
+    this->A(3, 0) =  half_dt * wz;
+    this->A(3, 1) =  half_dt * wy;
+    this->A(3, 2) = -half_dt * wx;
+
+    // --- Top-Right Block (4x3): Quaternion w.r.t Bias ---
+    this->A(0, 4) =  half_dt * q_last.x();
+    this->A(0, 5) =  half_dt * q_last.y();
+    this->A(0, 6) =  half_dt * q_last.z();
+
+    this->A(1, 4) = -half_dt * q_last.w();
+    this->A(1, 5) =  half_dt * q_last.z();
+    this->A(1, 6) = -half_dt * q_last.y();
+
+    this->A(2, 4) = -half_dt * q_last.z();
+    this->A(2, 5) = -half_dt * q_last.w();
+    this->A(2, 6) =  half_dt * q_last.x();
+
+    this->A(3, 4) =  half_dt * q_last.y();
+    this->A(3, 5) = -half_dt * q_last.x();
+    this->A(3, 6) = -half_dt * q_last.w();
+    this->P = this->A * this->P * this->A.transpose() + this->Q;
+    return;
+}
+
+void EKF_AHRS::correct(IMUSample& data)
+{
+    Eigen::Vector3d accel_norm = data.accel.normalized();
+    Eigen::Quaterniond q_pred(this->x(0), this->x(1), this->x(2), this->x(3));
+    Eigen::Vector3d v_pred(0.0, 0.0, 1.0);
+    Eigen::Vector3d h_x = q_pred.conjugate() * v_pred;
+    Eigen::Vector3d residual = accel_norm - h_x;
+    
+    double qw = this->x(0);
+    double qx = this->x(1);
+    double qy = this->x(2);
+    double qz = this->x(3);
+
+    // --- Row 0: Accelerometer X-axis derivatives ---
+    this->H(0, 0) = -2.0 * qy;
+    this->H(0, 1) =  2.0 * qz;
+    this->H(0, 2) = -2.0 * qw;
+    this->H(0, 3) =  2.0 * qx;
+
+    // --- Row 1: Accelerometer Y-axis derivatives ---
+    this->H(1, 0) =  2.0 * qx;
+    this->H(1, 1) =  2.0 * qw;
+    this->H(1, 2) =  2.0 * qz;
+    this->H(1, 3) =  2.0 * qy;
+
+    // --- Row 2: Accelerometer Z-axis derivatives ---
+    this->H(2, 0) =  2.0 * qw;
+    this->H(2, 1) = -2.0 * qx;
+    this->H(2, 2) = -2.0 * qy;
+    this->H(2, 3) =  2.0 * qz;
+
+    Eigen::Matrix<double, 3, 3> S = this->H * this->P * this->H.transpose() + this->R; // innovation covariance
+    Eigen::Matrix<double, 7, 3> K = this->P * this->H.transpose() * S.inverse(); // Kalman gain
+    this->x += K * residual;
+    Eigen::Quaterniond q_updated(this->x(0), this->x(1), this->x(2), this->x(3));
+    q_updated.normalize();
+    Eigen::Vector3d curr_gyro_bias(this->x(4), this->x(5), this->x(6));
+    this->gyro_bias_estimate.push_back(curr_gyro_bias);
+
+    Eigen::Vector3d euler_curr = quat_to_eulers(q_updated);
+    this->orient_estimate.push_back(q_updated);
+    this->euler_estimate.push_back(euler_curr);
+
+    this->x.head<4>() = Eigen::Vector4d(q_updated.w(), q_updated.x(), q_updated.y(), q_updated.z());
+    Eigen::Matrix<double, 7, 7> I = Eigen::Matrix<double, 7, 7>::Identity();
+    this->P = (I - K * this->H) * this->P;
+
+    return;
+}
+
+void EKF_AHRS::init_params()
+{
+    Eigen::Quaterniond init_quat = this->orient_estimate.back();
+    this->x.head<4>() = Eigen::Vector4d(init_quat.w(), init_quat.x(), init_quat.y(), init_quat.z());
+    this->x(4) = this->gyro_bias.x();
+    this->x(5) = this->gyro_bias.y();
+    this->x(6) = this->gyro_bias.z();
+    this->P = Eigen::MatrixXd::Identity(7, 7) * 0.01;
+
+    this->Q = Eigen::Matrix<double, 7, 7>::Zero();
+    this->Q.block<4,4>(0,0) = Eigen::Matrix4d::Identity() * (sigma_gyro_sq * dt);
+    this->Q.block<3,3>(4,4) = Eigen::Matrix3d::Identity() * (sigma_bias_sq * dt);
+
+    this->A = Eigen::MatrixXd::Identity(7, 7);
+    this->H = Eigen::Matrix<double, 3, 7>::Zero();
+    this->R = Eigen::MatrixXd::Identity(3, 3) * sigma_accel_sq;
 }

@@ -34,7 +34,7 @@ class BASE_AHRS
         virtual ~BASE_AHRS() = default; // abstract class has one or more virtual functions
 
         void CHEBY_LP_FILT(IMUSample& data);
-        void euler_error(const std::string& filename, const std::vector<Eigen::Vector3d>& euler1,
+        void vec_error(const std::string& filename, const std::vector<Eigen::Vector3d>& euler1,
                             const std::vector<Eigen::Vector3d>& euler2);
         double get_shortest_angle_error(double estimate, double ground_truth);
         void quat_error(const std::string& filename, const std::vector<Eigen::Quaterniond>& gt_trajectory);
@@ -89,6 +89,30 @@ class MADGWICK_AHRS : public BASE_AHRS
 
     private:
         double alpha = 15.0;
+};
+
+class EKF_AHRS : public BASE_AHRS
+{
+    public:
+        EKF_AHRS(const std::vector<IMUSample>& imu_data) : BASE_AHRS(imu_data) {}
+        void ahrs_estimate() override;
+        void init_params();
+        void predict(IMUSample& data, double dt);
+        void correct(IMUSample& data);
+        std::vector<Eigen::Vector3d> gyro_bias_estimate;
+        
+    private:
+        Eigen::Vector<double, 7> x; // state vector
+        Eigen::Matrix<double, 7, 7> P; // covariance matrix
+        Eigen::Matrix<double, 7, 7> Q; // process noise covariance matrix
+        Eigen::Matrix<double, 7, 7> A; // state transition matrix (Jacobian)
+        Eigen::Matrix<double, 3, 7> H; // observation matrix (jacobian)
+        Eigen::Matrix<double, 3, 3> R; // measurement noise covariance
+
+        const double sigma_gyro_sq = 2.8791e-8; // (1.6968e-4)^2
+        const double sigma_bias_sq = 3.7609e-10; // (1.9393e-5)^2
+        const double sigma_accel_sq = 4.0e-6; // (2.0e-3)^2
+        const double dt = 1 / 200.0;
 };
 
 #endif

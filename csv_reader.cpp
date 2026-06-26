@@ -90,11 +90,11 @@ void GTReader::readCSV() {
             Eigen::Quaterniond curr_orient = Eigen::Quaterniond(stod(row[4]), stod(row[5]), stod(row[6]), stod(row[7]));
             Eigen::Vector3d curr_euler = quat_to_eulers(curr_orient);
             // sample.vel = Eigen::Vector3d(stod(row[8]), stod(row[9]), stod(row[10]));
-            // sample.gyro_bias = Eigen::Vector3d(stod(row[11]), stod(row[12]), stod(row[13]));
+            Eigen::Vector3d curr_gyro_bias = Eigen::Vector3d(stod(row[11]), stod(row[12]), stod(row[13]));
             // sample.accel_bias = Eigen::Vector3d(stod(row[14]), stod(row[15]), stod(row[16]));
             gt_orient_data.push_back(curr_orient);
             gt_euler_data.push_back(curr_euler);
-
+            gt_gyro_bias.push_back(curr_gyro_bias);
         }
     }
 

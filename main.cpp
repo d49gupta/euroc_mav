@@ -20,9 +20,10 @@ int main()
     // from inherited classes. This means assuming methods are in abstarct class, it can call method from
     // two different inherited classes without changing type. Note that if ahrs_estimate calls a custom non virtual 
     // class in one inherited class, using the base type to call this ahrs_estimate will still work
-    std::unique_ptr<MADGWICK_AHRS> iter1 = std::make_unique<MADGWICK_AHRS>(imu_reader.data);
+    std::unique_ptr<EKF_AHRS> iter1 = std::make_unique<EKF_AHRS>(imu_reader.data);
     iter1->ahrs_estimate();
     iter1->quat_error("dead_reckoning.csv", gt_reader.gt_orient_data);
-    iter1->euler_error("euler.csv", iter1->euler_estimate, gt_reader.gt_euler_data);
+    iter1->vec_error("euler.csv", iter1->euler_estimate, gt_reader.gt_euler_data);
+    iter1->vec_error("gyro_bias.csv", iter1->gyro_bias_estimate, gt_reader.gt_gyro_bias);
     return 0;
 }
