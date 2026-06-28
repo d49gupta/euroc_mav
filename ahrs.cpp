@@ -259,6 +259,13 @@ void MAHONY_AHRS::ahrs_estimate()
 
 void MAHONY_AHRS::MAHONY_FILT(IMUSample& data, double dt)
 {
+    double a_mag = data.accel.norm();
+    double accel_error = std::abs(a_mag - GRAV);
+    if (accel_error > 0.40)
+    {
+        data.gyro = (data.gyro - this->gyro_bias);
+        return;
+    }
     Eigen::Quaterniond q_prev = this->orient_estimate.back();
     Eigen::Vector3d v_world(0.0, 0.0, 1.0);
     Eigen::Vector3d v_pred = q_prev.conjugate() * v_world; // q * v would rotate body->world, q_conj * v would rotate world->body
@@ -393,6 +400,7 @@ void EKF_AHRS::ahrs_estimate()
 void EKF_AHRS::predict(IMUSample& data, double dt)
 {
     Eigen::Quaterniond q_last(this->x(0), this->x(1), this->x(2), this->x(3));
+    this->A.setIdentity();
 
     double wx = data.gyro.x() - this->x(4);
     double wy = data.gyro.y() - this->x(5);
@@ -446,6 +454,16 @@ void EKF_AHRS::predict(IMUSample& data, double dt)
 
 void EKF_AHRS::correct(IMUSample& data)
 {
+    double a_mag = data.accel.norm();
+    double accel_error = std::abs(a_mag - GRAV);
+    if (accel_error > 0.40)
+    {
+        Eigen::Quaterniond q_pred(this->x(0), this->x(1), this->x(2), this->x(3));
+        this->orient_estimate.push_back(q_pred);
+        return;
+    }
+
+    this->H = Eigen::Matrix<double, 3, 7>::Zero();
     Eigen::Vector3d accel_norm = data.accel.normalized();
     Eigen::Quaterniond q_pred(this->x(0), this->x(1), this->x(2), this->x(3));
     Eigen::Vector3d v_pred(0.0, 0.0, 1.0);
@@ -482,11 +500,10 @@ void EKF_AHRS::correct(IMUSample& data)
     q_updated.normalize();
     Eigen::Vector3d curr_gyro_bias(this->x(4), this->x(5), this->x(6));
     this->gyro_bias_estimate.push_back(curr_gyro_bias);
+    this->orient_estimate.push_back(q_updated);
 
     // Eigen::Vector3d euler_curr = quat_to_eulers(q_updated);
     // this->euler_estimate.push_back(euler_curr);
-    this->orient_estimate.push_back(q_updated);
-
     this->x.head<4>() = Eigen::Vector4d(q_updated.w(), q_updated.x(), q_updated.y(), q_updated.z());
     Eigen::Matrix<double, 7, 7> I = Eigen::Matrix<double, 7, 7>::Identity();
     this->P = (I - K * this->H) * this->P;
@@ -508,8 +525,8 @@ void EKF_AHRS::init_params()
     this->Q.block<3,3>(4,4) = Eigen::Matrix3d::Identity() * (sigma_bias_sq * dt);
 
     this->A = Eigen::MatrixXd::Identity(7, 7);
-    this->H = Eigen::Matrix<double, 3, 7>::Zero();
     this->R = Eigen::MatrixXd::Identity(3, 3) * sigma_accel_sq;
+    this->H = Eigen::Matrix<double, 3, 7>::Zero();
 }
 
 void BASE_AHRS::align_estimate()
