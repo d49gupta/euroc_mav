@@ -6,6 +6,7 @@
 #include <map>
 #include <iostream>
 #include <opencv2/core.hpp>
+#include <opencv2/opencv.hpp>
 
 using namespace std;
 using namespace cv;
@@ -16,6 +17,7 @@ class imageReader
         imageReader(string dir_path) : dir_path(dir_path) {}
         void datasetLoader();
         vector<vector<string>> frame_cam_names;
+        vector<vector<unsigned long long>> frame_cam_timestamp;
     private:
         int numb_cams = 2;
         string dir_path;

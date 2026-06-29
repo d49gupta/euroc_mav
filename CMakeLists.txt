@@ -25,6 +25,7 @@ add_executable(imu
 
 add_executable(cam
   image_reader.cpp
+  vo.cpp
   main_cam.cpp
 )
 
