@@ -26,8 +26,9 @@ class StereoTracker
         vector<int> prev_feature_ids;
         int next_id = 0;
         vector<Feature> current_matches;
-        vector<Point2f> undistorted_left_pts;
-        vector<Point2f> undistorted_right_pts;
+        unordered_map<int, cv::Point3d> global_map;
+
+        double b = 0.1101; // baseline in meters
 
         const int max_features = 150;
         const Size window_size = Size(21, 21);
@@ -47,9 +48,9 @@ class StereoTracker
         
     public:
         StereoTracker() {}
-        void undistort(const std::vector<cv::Point2f>& left_pts, const std::vector<cv::Point2f>& right_pts);
         void processFrame(string left_img_path, string right_img_path);
         void visualizeMatch(string left_img_path, string right_img_path);
+        void triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Point2f>& feature_pts, const int numb_features, const cv::Mat& mask);
 };
 
 #endif

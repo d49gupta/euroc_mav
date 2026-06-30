@@ -1,13 +1,5 @@
 #include "vo.hpp"
 
-void StereoTracker::undistort(const std::vector<cv::Point2f>& left_pts, const std::vector<cv::Point2f>& right_pts)
-{
-    undistorted_left_pts.clear();
-    undistorted_right_pts.clear();
-    undistortPoints(left_pts, undistorted_left_pts, K_left, D_left, Mat(), Mat());
-    undistortPoints(right_pts, undistorted_right_pts, K_right, D_right, Mat(), Mat());
-}
-
 void StereoTracker::processFrame(string left_img_path, string right_img_path)
 {
     current_matches.clear();
@@ -22,14 +14,7 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
 
     if (prev_left_img.empty())
     {
-        cv::goodFeaturesToTrack(left_img, prev_left_feature_pts, max_features, 0.01, 10); // detect initial features
-        prev_feature_ids.resize(prev_left_feature_pts.size());
-        for (size_t i = 0; i < prev_left_feature_pts.size(); i++)
-        {
-            prev_feature_ids[i] = next_id;
-            next_id++;
-        }
-        prev_left_img = left_img;   
+        triangulate(left_img, right_img, prev_left_feature_pts, max_features, Mat()); // detect initial features
         return;
     }
 
@@ -48,7 +33,6 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
                             status_stereo, err_stereo, window_size, max_level, term_crit); // track features across space
 
     vector<cv::Point2f> kept_left_pts;
-    vector<cv::Point2f> kept_right_pts;
     vector<int> kept_ids;
     for (size_t i = 0; i < prev_left_feature_pts.size(); i++)
     {
@@ -61,11 +45,9 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
             current_matches.push_back(match);
 
             kept_left_pts.push_back(curr_left_pts[i]);
-            kept_right_pts.push_back(curr_right_pts[i]);
             kept_ids.push_back(prev_feature_ids[i]);
         }
     }
-    undistort(kept_left_pts, kept_right_pts);
 
     if (kept_left_pts.size() < (size_t)(max_features * 0.7)) // if there arent enough tracked features, get new ones
     {
@@ -75,7 +57,7 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
         
         vector<Point2f> new_pts;
         int features_to_find = max_features - kept_left_pts.size();
-        cv::goodFeaturesToTrack(left_img, new_pts, features_to_find, 0.01, 10, mask); // find new features with the mask
+        triangulate(left_img, right_img, new_pts, features_to_find, mask); // find new features with the mask
         for (const auto& pt : new_pts)
         {
             kept_left_pts.push_back(pt);
@@ -118,4 +100,61 @@ void StereoTracker::visualizeMatch(string left_img_path, string right_img_path)
     cv::hconcat(img_left, img_right, combined_image);
     cv::imshow("Stereo Cameras", combined_image);
     cv::waitKey(25);
+}
+
+void StereoTracker::triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Point2f>& left_pts, const int numb_features, const cv::Mat& mask)
+{
+    if (mask.empty())
+        cv::goodFeaturesToTrack(left_img, left_pts, numb_features, 0.01, 10); // detect initial features
+    else
+        cv::goodFeaturesToTrack(left_img, left_pts, numb_features, 0.01, 10, mask);
+
+    vector<cv::Point2f> right_pts;
+    vector<uchar> status_stereo;
+    vector<float> err_stereo;
+
+    calcOpticalFlowPyrLK(left_img, right_img, left_pts, right_pts, 
+                            status_stereo, err_stereo, window_size, max_level, term_crit); // track features across space
+
+    vector<Point2f> kept_left_pts;
+    vector<Point2f> kept_right_pts;
+
+    for (size_t i = 0; i < left_pts.size(); i++)
+    {
+        if (status_stereo[i]) // filter out new features that exist in both left and right cameras
+        {
+            kept_left_pts.push_back(left_pts[i]);
+            kept_right_pts.push_back(right_pts[i]);
+        }
+    }
+
+    left_pts = kept_left_pts;
+    if (this->prev_left_img.empty()) // ID initial features at t = 0
+    {
+        this->prev_feature_ids.resize(left_pts.size());
+        for (size_t i = 0; i < this->prev_left_feature_pts.size(); i++)
+        {
+            this->prev_feature_ids[i] = this->next_id;
+            this->next_id++;
+        }
+        this->prev_left_img = left_img;
+    }
+
+    vector<Point2f> undistorted_left_pts;
+    vector<Point2f> undistorted_right_pts;
+    undistortPoints(left_pts, undistorted_left_pts, K_left, D_left, Mat(), Mat());
+    undistortPoints(right_pts, undistorted_right_pts, K_right, D_right, Mat(), Mat());
+
+    int numb_matches = min(kept_left_pts.size(), kept_right_pts.size());
+    for (int i = 0; i < numb_matches; i++)
+    {
+        double norm_disparity = undistorted_left_pts[i].x - undistorted_right_pts[i].x;
+        
+        if (norm_disparity <= 1e-6) 
+            continue; 
+
+        double z = b / norm_disparity;
+        cv::Point3d point_3d(undistorted_left_pts[i].x * z, undistorted_left_pts[i].y * z, z); // decide if you want to transform from left to body frame
+        global_map[prev_feature_ids[i]] = point_3d;
+    }
 }
