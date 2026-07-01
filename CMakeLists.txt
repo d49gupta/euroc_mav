@@ -15,6 +15,11 @@ add_compile_options(-Wno-class-memaccess)
 
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 
 add_executable(imu
   csv_reader.cpp
@@ -49,8 +54,14 @@ target_include_directories(cam PUBLIC
   ${OpenCV_INCLUDE_DIRS}
 )
 
+ament_target_dependencies(imu rclcpp std_msgs sensor_msgs nav_msgs)
+ament_target_dependencies(cam rclcpp std_msgs sensor_msgs nav_msgs)
+
 
 install(TARGETS
+  imu
   cam
   DESTINATION lib/${PROJECT_NAME}
 )
+
+ament_package()

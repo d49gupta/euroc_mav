@@ -8,6 +8,10 @@
 #include <opencv2/core.hpp>
 #include <opencv2/opencv.hpp>
 
+#include "rclcpp/rclcpp.hpp"
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/point_cloud2_iterator.hpp>
+
 using namespace std;
 using namespace cv;
 
@@ -18,7 +22,7 @@ struct Feature
     Point2f right_pt;
 };
 
-class StereoTracker
+class StereoTracker : public rclcpp::Node
 {
     private:
         cv::Mat prev_left_img;
@@ -45,12 +49,14 @@ class StereoTracker
                                                 0,  0,  1);
 
         vector<double> D_right = {-0.28368365,  0.07451284, -0.00010473, -3.55590700e-05};
+        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_pub;
         
     public:
-        StereoTracker() {}
+        StereoTracker(string nodeName);
         void processFrame(string left_img_path, string right_img_path);
         void visualizeMatch(string left_img_path, string right_img_path);
         void triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Point2f>& feature_pts, const int numb_features, const cv::Mat& mask);
+        void publishPointCloud();
 };
 
 #endif

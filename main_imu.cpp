@@ -3,8 +3,8 @@
 
 int main() 
 {
-    IMUReader imu_reader("../vicon_room1/vicon_room1/V1_01_easy/V1_01_easy/mav0/imu0/data.csv");
-    GTReader gt_reader("../vicon_room1/vicon_room1/V1_01_easy/V1_01_easy/mav0/state_groundtruth_estimate0/data.csv");
+    IMUReader imu_reader("src/vicon_room1/vicon_room1/V1_01_easy/V1_01_easy/mav0/imu0/data.csv");
+    GTReader gt_reader("src/vicon_room1/vicon_room1/V1_01_easy/V1_01_easy/mav0/state_groundtruth_estimate0/data.csv");
 
     imu_reader.readCSV();
     cout<<"Data size: "<<imu_reader.data.size()<<endl;

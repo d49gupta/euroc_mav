@@ -1,5 +1,10 @@
 #include "vo.hpp"
 
+StereoTracker::StereoTracker(string nodeName) : Node(nodeName) 
+{
+    this->point_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("/vo/point_cloud", 10);
+}
+
 void StereoTracker::processFrame(string left_img_path, string right_img_path)
 {
     current_matches.clear();
@@ -157,4 +162,32 @@ void StereoTracker::triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Po
         cv::Point3d point_3d(undistorted_left_pts[i].x * z, undistorted_left_pts[i].y * z, z); // decide if you want to transform from left to body frame
         global_map[prev_feature_ids[i]] = point_3d;
     }
+}
+
+void StereoTracker::publishPointCloud()
+{
+    auto pc2_msg = std::make_shared<sensor_msgs::msg::PointCloud2>();
+    pc2_msg->header.stamp = rclcpp::Clock().now();
+    pc2_msg->header.frame_id = "map";
+
+    // FIX: PointCloud2Modifier lives directly under sensor_msgs, not msg!
+    sensor_msgs::PointCloud2Modifier modifier(*pc2_msg);
+    modifier.setPointCloud2FieldsByString(1, "xyz");
+    modifier.resize(global_map.size());
+
+    // FIX: PointCloud2Iterator lives directly under sensor_msgs!
+    sensor_msgs::PointCloud2Iterator<float> iter_x(*pc2_msg, "x");
+    sensor_msgs::PointCloud2Iterator<float> iter_y(*pc2_msg, "y");
+    sensor_msgs::PointCloud2Iterator<float> iter_z(*pc2_msg, "z");
+
+    for (const auto& [id, pt] : global_map)
+    {
+        *iter_x = static_cast<float>(pt.x);
+        *iter_y = static_cast<float>(pt.y);
+        *iter_z = static_cast<float>(pt.z);
+
+        ++iter_x; ++iter_y; ++iter_z;
+    }
+
+    this->point_cloud_pub->publish(*pc2_msg);
 }
