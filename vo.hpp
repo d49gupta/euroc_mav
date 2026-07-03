@@ -5,8 +5,11 @@
 #include <string>
 #include <map>
 #include <iostream>
+#include <fstream>
 #include <opencv2/core.hpp>
 #include <opencv2/opencv.hpp>
+#include <Eigen/Dense>
+#include <Eigen/Geometry>
 
 #include "rclcpp/rclcpp.hpp"
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -22,9 +25,17 @@ struct Feature
     Point2f right_pt;
 };
 
+struct Pose
+{
+    double timestamp;
+    Eigen::Vector3d pos;
+    Eigen::Quaterniond orient;
+};
+
 class StereoTracker : public rclcpp::Node
 {
     private:
+        int iteration = 0;
         cv::Mat prev_left_img;
         vector<Point2f> prev_left_feature_pts;
         vector<int> prev_feature_ids;
@@ -32,8 +43,7 @@ class StereoTracker : public rclcpp::Node
         vector<Feature> current_matches;
         unordered_map<int, cv::Point3d> global_map;
 
-        double b = 0.1101; // baseline in meters
-
+        const double b = 0.1101; // baseline in meters
         const int max_features = 150;
         const Size window_size = Size(21, 21);
         const int max_level = 3;
@@ -50,13 +60,38 @@ class StereoTracker : public rclcpp::Node
 
         vector<double> D_right = {-0.28368365,  0.07451284, -0.00010473, -3.55590700e-05};
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_pub;
-        
+
+        // Extrinsic matrix from left camera to body frame
+        cv::Mat R_B_C = (cv::Mat_<double>(3, 3) << 0.0148655429818, -0.999880929698,  0.00414029679422,
+                                                        0.999557249008,   0.0149672133247,  0.025715529948,
+                                                        -0.0257744366974,  0.00375618835797, 0.999660727178);
+        cv::Mat t_B_C = (cv::Mat_<double>(3, 1) << -0.0216401454975, -0.064676986768, 0.00981073058949);
+
+        // Inverted extrinsics left camera -> IMU body frame
+        cv::Mat R_C_B = R_B_C.t();
+        cv::Mat t_C_B = -R_B_C.t() * t_B_C;
+
+        // Transformation matrix: left camera -> world transformation
+        cv::Mat R_W_C;
+        cv::Mat t_W_C;
+
+        // Initial orientation  and translation to align Vicon Frame with world frame
+        Eigen::Quaterniond q_init{0.060514, -0.82846, -0.05896, -0.55364};
+        Eigen::Matrix3d R_init = q_init.toRotationMatrix();
+        Eigen::Vector3d t_init{0.878612, 2.14247, 0.947262};
+
     public:
         StereoTracker(string nodeName);
         void processFrame(string left_img_path, string right_img_path);
         void visualizeMatch(string left_img_path, string right_img_path);
         void triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Point2f>& feature_pts, const int numb_features, const cv::Mat& mask);
         void publishPointCloud();
+        void getPose(double timestamp);
+
+        // Final pose estimate
+        vector<Pose> estimate;
+        void outputPose(string filename);
+
 };
 
 #endif

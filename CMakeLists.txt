@@ -40,6 +40,7 @@ target_link_libraries(imu
 
 target_link_libraries(cam
   ${OpenCV_LIBS}
+  Eigen3::Eigen
 )
 
 
@@ -51,6 +52,7 @@ target_include_directories(imu PUBLIC
 
 target_include_directories(cam PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
+  ${Eigen3_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
 )
 

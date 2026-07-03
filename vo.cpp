@@ -3,6 +3,9 @@
 StereoTracker::StereoTracker(string nodeName) : Node(nodeName) 
 {
     this->point_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("/vo/point_cloud", 10);
+    this->R_W_C = cv::Mat::eye(3, 3, CV_64F);
+    this->t_W_C = cv::Mat::zeros(3, 1, CV_64F);
+    // TODO: For initial frame, rotate to body->world frame and append that to estimate vector and also give in initial timestamp
 }
 
 void StereoTracker::processFrame(string left_img_path, string right_img_path)
@@ -147,28 +150,35 @@ void StereoTracker::triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Po
 
     vector<Point2f> undistorted_left_pts;
     vector<Point2f> undistorted_right_pts;
+    // transforms 2D point into normalized 3D point through K^-1
     undistortPoints(left_pts, undistorted_left_pts, K_left, D_left, Mat(), Mat());
     undistortPoints(right_pts, undistorted_right_pts, K_right, D_right, Mat(), Mat());
 
     int numb_matches = min(kept_left_pts.size(), kept_right_pts.size());
     for (int i = 0; i < numb_matches; i++)
     {
+        // can do this since left and right pixel coordinates are seperated by constant offset (x=200 in left image represents 200+disparity in right image)
+        // only works if both cameras share same dimensions (length x width)
         double norm_disparity = undistorted_left_pts[i].x - undistorted_right_pts[i].x;
         
         if (norm_disparity <= 1e-6) 
             continue; 
 
+        // use z scaling factor to calculate 3D point
         double z = b / norm_disparity;
-        cv::Point3d point_3d(undistorted_left_pts[i].x * z, undistorted_left_pts[i].y * z, z); // decide if you want to transform from left to body frame
-        global_map[prev_feature_ids[i]] = point_3d;
+        cv::Mat P_C = (cv::Mat_<double>(3, 1) << undistorted_left_pts[i].x * z, undistorted_left_pts[i].y * z, z); // 3D point in current left camera frame
+        cv::Mat P_W_mat = R_W_C * P_C + t_W_C; // 3D point in world frame
+        cv::Point3d P_W(P_W_mat.at<double>(0), P_W_mat.at<double>(1), P_W_mat.at<double>(2));
+        global_map[prev_feature_ids[i]] = P_W; // 3D points in saved to global map in world frame
     }
+    // publishPointCloud();
 }
 
 void StereoTracker::publishPointCloud()
 {
     auto pc2_msg = std::make_shared<sensor_msgs::msg::PointCloud2>();
     pc2_msg->header.stamp = rclcpp::Clock().now();
-    pc2_msg->header.frame_id = "map";
+    pc2_msg->header.frame_id = "camera_left_frame";
 
     // FIX: PointCloud2Modifier lives directly under sensor_msgs, not msg!
     sensor_msgs::PointCloud2Modifier modifier(*pc2_msg);
@@ -182,12 +192,91 @@ void StereoTracker::publishPointCloud()
 
     for (const auto& [id, pt] : global_map)
     {
-        *iter_x = static_cast<float>(pt.x);
-        *iter_y = static_cast<float>(pt.y);
-        *iter_z = static_cast<float>(pt.z);
+        // match to rviz frame for pointcloud visualization
+        *iter_x = static_cast<float>(pt.z);
+        *iter_y = static_cast<float>(pt.x);
+        *iter_z = static_cast<float>(-pt.y);
 
         ++iter_x; ++iter_y; ++iter_z;
     }
 
     this->point_cloud_pub->publish(*pc2_msg);
+}
+
+void StereoTracker::getPose(double timestamp)
+{
+    std::vector<cv::Point3f> object_points; // 3D points in global map
+    std::vector<cv::Point2f> image_points;  // 2D pixel locations
+
+    for (size_t i = 0; i < current_matches.size(); i++)
+    {
+        int id = current_matches[i].id;
+
+        if (global_map.find(id) != global_map.end())
+        {
+            cv::Point3d pt3d = global_map[id];
+            object_points.push_back(cv::Point3f(pt3d.x, pt3d.y, pt3d.z));
+            image_points.push_back(current_matches[i].left_pt);
+        }
+    }
+    cv::Mat rvec, tvec;
+    std::vector<int> inliers;
+    if (object_points.size() >= 4)
+    {
+        // solvePnPRansac solves transformation matrix from world to camera frame
+        // No need to propogate T since you're comparing to global map object points in world frame
+        bool success = cv::solvePnPRansac(object_points, image_points, K_left, D_left, rvec, tvec, false, 100, 8.0F, 0.99,inliers);
+
+        if (success) 
+        {
+            cv::Mat R_C_W;
+            cv::Rodrigues(rvec, R_C_W);
+
+            // Invert to solve left camera -> world transformation
+            // Current pose of left camera relative to world frame (starting pose of left camera)
+            this->R_W_C = R_C_W.t();
+            this->t_W_C = -R_W_C * tvec;
+
+            // Solves IMU body frame -> world transformation
+            // Current pose of IMU body relative to world frame (starting pose of left camera)
+            cv::Mat R_W_B = R_W_C * R_C_B;
+            cv::Mat t_W_B = R_W_C * t_C_B + t_W_C;
+
+            Eigen::Vector3d p_W_B(t_W_B.at<double>(0), t_W_B.at<double>(1), t_W_B.at<double>(2)); // body -> world
+            Eigen::Matrix3d rotation;
+            rotation << R_W_B.at<double>(0,0), R_W_B.at<double>(0,1), R_W_B.at<double>(0,2),
+                        R_W_B.at<double>(1,0), R_W_B.at<double>(1,1), R_W_B.at<double>(1,2),
+                        R_W_B.at<double>(2,0), R_W_B.at<double>(2,1), R_W_B.at<double>(2,2);
+            Eigen::Quaterniond q_W_B(rotation); // body -> world
+
+            Pose curr_pose;
+            curr_pose.timestamp = timestamp;
+            curr_pose.pos = p_W_B;
+            curr_pose.orient = q_W_B;
+            this->estimate.push_back(curr_pose);
+        }
+        else    
+            cout<<"Frame "<<this->iteration<<": Unable to solve pose estimation"<<endl;
+    }
+    else
+        cout<<"Frame "<<this->iteration<<": Not enough matches to solve pose estimation"<<endl;
+
+    this->iteration++;
+}
+
+void StereoTracker::outputPose(string filename)
+{
+    std::ofstream csv_file(filename);
+    csv_file << "timestamp,p_x,p_y,p_z,q_w,q_x,q_y,q_z\n";
+    csv_file << std::fixed << std::setprecision(6);
+
+    cout<<"VO estimate size: "<<this->estimate.size()<<endl;
+    for (auto pose : this->estimate)
+    {
+        Eigen::Vector3d vicon_pos = (R_init * pose.pos) + t_init;
+        Eigen::Quaterniond vicon_orient = q_init * pose.orient;
+        csv_file << pose.timestamp << ","<< vicon_pos.x() << ","<< vicon_pos.y() << ","<< vicon_pos.z() << ","
+        << vicon_orient.w() << ","<< vicon_orient.x() << ","<< vicon_orient.y() << ","<< vicon_orient.z() << "\n";
+    }
+    csv_file.close();
 }

@@ -8,16 +8,20 @@ int main(int argc, char **argv)
     reader->datasetLoader();
     
     cout<<"First timestamp: "<<reader->frame_cam_timestamp[0][0]<<endl;
-    auto stereo_tracker = std::make_shared<StereoTracker>("stereo_tracker");
 
-    for (size_t i = 0; i < reader->frame_cam_names.size(); i++)
+    auto stereo_tracker = std::make_shared<StereoTracker>("stereo_tracker");
+    // for (size_t i = 0; i < reader->frame_cam_names.size() && rclcpp::ok(); i++)
+    for (size_t i = 0; i < 200 && rclcpp::ok(); i++)
     {
         string left_path = reader->frame_cam_names[i][0];
         string right_path = reader->frame_cam_names[i][1];
         stereo_tracker->processFrame(left_path, right_path);
         // stereo_tracker->visualizeMatch(left_path, right_path);
-        stereo_tracker->publishPointCloud();
+        stereo_tracker->getPose(reader->frame_cam_timestamp[i][0]);
+        rclcpp::spin_some(stereo_tracker);
     }
+    
+    stereo_tracker->outputPose("src/build/vo_estimate.csv");
     cv::destroyAllWindows();
     rclcpp::shutdown();
     return 0;
