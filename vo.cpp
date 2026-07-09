@@ -13,6 +13,8 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
     current_matches.clear();
     cv::Mat left_img = cv::imread(left_img_path, IMREAD_GRAYSCALE);
     cv::Mat right_img = cv::imread(right_img_path, IMREAD_GRAYSCALE);
+    vector<cv::Point2f> kept_left_pts;
+    vector<int> kept_ids;
 
     if (left_img.empty() || right_img.empty())
     {
@@ -22,7 +24,8 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
 
     if (prev_left_img.empty())
     {
-        triangulate(left_img, right_img, prev_left_feature_pts, max_features, Mat()); // detect initial features
+        triangulate(left_img, right_img, prev_left_feature_pts, max_features, Mat(), kept_left_pts, kept_ids); // detect initial features
+        this->prev_left_img = left_img;
         return;
     }
 
@@ -40,9 +43,7 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
     calcOpticalFlowPyrLK(left_img, right_img, curr_left_pts, curr_right_pts, 
                             status_stereo, err_stereo, window_size, max_level, term_crit); // track features across space
 
-    vector<cv::Point2f> kept_left_pts;
-    vector<int> kept_ids;
-    for (size_t i = 0; i < prev_left_feature_pts.size(); i++)
+    for (size_t i = 0; i < prev_left_feature_pts.size(); i++) // temporal/spatial matches are ordered in index from prev_left_feature_pts
     {
         if (status_temporal[i] && status_stereo[i]) // check that feature is tracker across time and space (prev and right images)
         {
@@ -65,14 +66,9 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
         
         vector<Point2f> new_pts;
         int features_to_find = max_features - kept_left_pts.size();
-        triangulate(left_img, right_img, new_pts, features_to_find, mask); // find new features with the mask
-        for (const auto& pt : new_pts)
-        {
-            kept_left_pts.push_back(pt);
-            kept_ids.push_back(next_id);
-            next_id++;
-        }
+        triangulate(left_img, right_img, new_pts, features_to_find, mask, kept_left_pts, kept_ids); // find new features with the mask
     }
+
     prev_left_img = left_img;
     prev_left_feature_pts = kept_left_pts;
     prev_feature_ids = kept_ids;
@@ -110,12 +106,13 @@ void StereoTracker::visualizeMatch(string left_img_path, string right_img_path)
     cv::waitKey(25);
 }
 
-void StereoTracker::triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Point2f>& left_pts, const int numb_features, const cv::Mat& mask)
+void StereoTracker::triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Point2f>& left_pts, const int numb_features, const cv::Mat& mask,
+                                vector<cv::Point2f>& added_left_pts, vector<int>& added_ids)
 {
     if (mask.empty())
-        cv::goodFeaturesToTrack(left_img, left_pts, numb_features, 0.01, 10); // detect initial features
+        cv::goodFeaturesToTrack(left_img, left_pts, numb_features, 0.01, 10); // detect initial features (initial frame)
     else
-        cv::goodFeaturesToTrack(left_img, left_pts, numb_features, 0.01, 10, mask);
+        cv::goodFeaturesToTrack(left_img, left_pts, numb_features, 0.01, 10, mask); // detect more features with mask (key frame)
 
     vector<cv::Point2f> right_pts;
     vector<uchar> status_stereo;
@@ -140,19 +137,19 @@ void StereoTracker::triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Po
     if (this->prev_left_img.empty()) // ID initial features at t = 0
     {
         this->prev_feature_ids.resize(left_pts.size());
-        for (size_t i = 0; i < this->prev_left_feature_pts.size(); i++)
+        for (size_t i = 0; i < left_pts.size(); i++)
         {
             this->prev_feature_ids[i] = this->next_id;
             this->next_id++;
         }
-        this->prev_left_img = left_img;
+        this->prev_left_feature_pts = left_pts;
     }
 
     vector<Point2f> undistorted_left_pts;
     vector<Point2f> undistorted_right_pts;
-    // transforms 2D point into normalized 3D point through K^-1
+    // transforms 2D point into normalized 3D point through K^-1 (3D point divided by z depth)
     undistortPoints(left_pts, undistorted_left_pts, K_left, D_left, Mat(), Mat());
-    undistortPoints(right_pts, undistorted_right_pts, K_right, D_right, Mat(), Mat());
+    undistortPoints(kept_right_pts, undistorted_right_pts, K_right, D_right, Mat(), Mat());
 
     int numb_matches = min(kept_left_pts.size(), kept_right_pts.size());
     for (int i = 0; i < numb_matches; i++)
@@ -161,16 +158,29 @@ void StereoTracker::triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Po
         // only works if both cameras share same dimensions (length x width)
         double norm_disparity = undistorted_left_pts[i].x - undistorted_right_pts[i].x;
         
-        if (norm_disparity <= 1e-6) 
+        if (!std::isfinite(norm_disparity) || norm_disparity <= 1e-3) 
             continue; 
 
         // use z scaling factor to calculate 3D point
         double z = b / norm_disparity;
+        if (z < 0.2 || z > 30.0)
+            continue;
+
         cv::Mat P_C = (cv::Mat_<double>(3, 1) << undistorted_left_pts[i].x * z, undistorted_left_pts[i].y * z, z); // 3D point in current left camera frame
         cv::Mat P_W_mat = R_W_C * P_C + t_W_C; // 3D point in world frame
         cv::Point3d P_W(P_W_mat.at<double>(0), P_W_mat.at<double>(1), P_W_mat.at<double>(2));
-        global_map[prev_feature_ids[i]] = P_W; // 3D points in saved to global map in world frame
+
+        if (this->prev_left_img.empty())
+                global_map[i] = P_W; // For initial frame
+        else 
+            {
+                global_map[this->next_id] = P_W; // For key frame
+                added_left_pts.push_back(kept_left_pts[i]);
+                added_ids.push_back(this->next_id);
+                this->next_id++;
+            }
     }
+    cout<<"Keyframe "<<this->iteration<<endl;
     // publishPointCloud();
 }
 
@@ -256,7 +266,7 @@ void StereoTracker::getPose(double timestamp)
             this->estimate.push_back(curr_pose);
         }
         else    
-            cout<<"Frame "<<this->iteration<<": Unable to solve pose estimation"<<endl;
+            cout<<"Frame "<<this->iteration<<": Unable to solve pose estimation, ID: "<<this->next_id<<endl;
     }
     else
         cout<<"Frame "<<this->iteration<<": Not enough matches to solve pose estimation"<<endl;
@@ -274,6 +284,9 @@ void StereoTracker::outputPose(string filename)
     for (auto pose : this->estimate)
     {
         Eigen::Vector3d vicon_pos = (R_init * pose.pos) + t_init;
+        if (vicon_pos.norm() > 1e3)
+            continue;
+        
         Eigen::Quaterniond vicon_orient = q_init * pose.orient;
         csv_file << pose.timestamp << ","<< vicon_pos.x() << ","<< vicon_pos.y() << ","<< vicon_pos.z() << ","
         << vicon_orient.w() << ","<< vicon_orient.x() << ","<< vicon_orient.y() << ","<< vicon_orient.z() << "\n";

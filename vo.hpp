@@ -84,7 +84,8 @@ class StereoTracker : public rclcpp::Node
         StereoTracker(string nodeName);
         void processFrame(string left_img_path, string right_img_path);
         void visualizeMatch(string left_img_path, string right_img_path);
-        void triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Point2f>& feature_pts, const int numb_features, const cv::Mat& mask);
+        void triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Point2f>& feature_pts, const int numb_features, const cv::Mat& mask, 
+                        vector<cv::Point2f>& added_left_pts, vector<int>& added_ids);
         void publishPointCloud();
         void getPose(double timestamp);
 
