@@ -14,6 +14,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
+#include <nav_msgs/msg/path.hpp>
 
 using namespace std;
 using namespace cv;
@@ -66,6 +67,8 @@ class StereoTracker : public rclcpp::Node
 
         cv::Mat D_right = (cv::Mat_<double>(1, 4) << -0.28368365,  0.07451284, -0.00010473, -3.55590700e-05);
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_pub;
+        rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub;
+        nav_msgs::msg::Path path;
 
         // Extrinsic matrix from left camera to body frame
         cv::Mat R_B_C = (cv::Mat_<double>(3, 3) << 0.0148655429818, -0.999880929698,  0.00414029679422,
@@ -95,8 +98,8 @@ class StereoTracker : public rclcpp::Node
         void visualizeMatch(string left_img_path, string right_img_path);
         void triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Point2f>& feature_pts, const int numb_features, const cv::Mat& mask, 
                         vector<cv::Point2f>& added_left_pts, vector<int>& added_ids);
-        void publishPointCloud();
-        void getPose(double timestamp);
+        void publishMap();
+        void getPose();
 
         // Final pose estimate
         vector<Pose> estimate;

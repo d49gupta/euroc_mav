@@ -20,7 +20,7 @@ int main(int argc, char **argv)
         rclcpp::spin_some(stereo_tracker);
     }
     
-    stereo_tracker->outputPose("src/build/vo_estimate.csv");
+    // stereo_tracker->outputPose("src/build/vo_estimate.csv");
     cv::destroyAllWindows();
     rclcpp::shutdown();
     return 0;

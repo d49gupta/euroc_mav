@@ -3,12 +3,13 @@
 StereoTracker::StereoTracker(string nodeName) : Node(nodeName) 
 {
     this->point_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("/vo/point_cloud", 10);
+    this->path_pub = this->create_publisher<nav_msgs::msg::Path>("/vo/path", 10);
+    path.header.frame_id = "map";
+
     this->rvec = cv::Mat::zeros(3, 1, CV_64F);
     this->tvec = cv::Mat::zeros(3, 1, CV_64F);
-
     this->R_W_C = cv::Mat::eye(3, 3, CV_64F);
     this->t_W_C = cv::Mat::zeros(3, 1, CV_64F);
-    // TODO: For initial frame, rotate to body->world frame and append that to estimate vector and also give in initial timestamp
 }
 
 void StereoTracker::processFrame(string left_img_path, string right_img_path)
@@ -62,7 +63,7 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
         }
     }
 
-    getPose(0);
+    getPose();
     if (kept_left_pts.size() < (size_t)(max_features * 0.7)) // if there arent enough tracked features, get new ones
     {
         Mat mask = Mat::ones(left_img.size(), CV_8UC1); // one channel canvas of 1's size of image
@@ -194,21 +195,19 @@ void StereoTracker::triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Po
                 this->next_id++;
             }
     }
-    // publishPointCloud();
+    publishMap();
 }
 
-void StereoTracker::publishPointCloud()
+void StereoTracker::publishMap()
 {
     auto pc2_msg = std::make_shared<sensor_msgs::msg::PointCloud2>();
     pc2_msg->header.stamp = rclcpp::Clock().now();
-    pc2_msg->header.frame_id = "camera_left_frame";
+    pc2_msg->header.frame_id = "map";
 
-    // FIX: PointCloud2Modifier lives directly under sensor_msgs, not msg!
     sensor_msgs::PointCloud2Modifier modifier(*pc2_msg);
     modifier.setPointCloud2FieldsByString(1, "xyz");
     modifier.resize(global_map.size());
 
-    // FIX: PointCloud2Iterator lives directly under sensor_msgs!
     sensor_msgs::PointCloud2Iterator<float> iter_x(*pc2_msg, "x");
     sensor_msgs::PointCloud2Iterator<float> iter_y(*pc2_msg, "y");
     sensor_msgs::PointCloud2Iterator<float> iter_z(*pc2_msg, "z");
@@ -226,7 +225,7 @@ void StereoTracker::publishPointCloud()
     this->point_cloud_pub->publish(*pc2_msg);
 }
 
-void StereoTracker::getPose(double timestamp)
+void StereoTracker::getPose()
 {
     std::vector<cv::Point3f> object_points; // 3D points in global map
     std::vector<cv::Point2f> image_points;  // 2D pixel locations
@@ -270,7 +269,7 @@ void StereoTracker::getPose(double timestamp)
         //     << " Inliers: " << inliers.size()
         //     << " Map size: " << global_map.size()
         //     << endl;
-        
+
         if (success) 
         {
             cv::Mat R_C_W;
@@ -281,23 +280,28 @@ void StereoTracker::getPose(double timestamp)
             this->R_W_C = R_C_W.t();
             this->t_W_C = -R_W_C * this->tvec;
 
-            // Solves IMU body frame -> world transformation
-            // Current pose of IMU body relative to world frame (starting pose of left camera)
-            cv::Mat R_W_B = R_W_C * R_C_B;
-            cv::Mat t_W_B = R_W_C * t_C_B + t_W_C;
-
-            Eigen::Vector3d p_W_B(t_W_B.at<double>(0), t_W_B.at<double>(1), t_W_B.at<double>(2)); // body -> world
             Eigen::Matrix3d rotation;
-            rotation << R_W_B.at<double>(0,0), R_W_B.at<double>(0,1), R_W_B.at<double>(0,2),
-                        R_W_B.at<double>(1,0), R_W_B.at<double>(1,1), R_W_B.at<double>(1,2),
-                        R_W_B.at<double>(2,0), R_W_B.at<double>(2,1), R_W_B.at<double>(2,2);
-            Eigen::Quaterniond q_W_B(rotation); // body -> world
+            rotation << R_W_C.at<double>(0,0), R_W_C.at<double>(0,1), R_W_C.at<double>(0,2),
+                        R_W_C.at<double>(1,0), R_W_C.at<double>(1,1), R_W_C.at<double>(1,2),
+                        R_W_C.at<double>(2,0), R_W_C.at<double>(2,1), R_W_C.at<double>(2,2);
+            Eigen::Quaterniond q_W_C(rotation); // body -> world
+            
+            geometry_msgs::msg::PoseStamped pose;
+            pose.header.stamp = rclcpp::Clock().now();
+            pose.header.frame_id = "map";
+            path.header.stamp = pose.header.stamp;
 
-            Pose curr_pose;
-            curr_pose.timestamp = timestamp;
-            curr_pose.pos = p_W_B;
-            curr_pose.orient = q_W_B;
-            this->estimate.push_back(curr_pose);
+            // Match point cloud orientation in rviz
+            pose.pose.position.x = t_W_C.at<double>(2);
+            pose.pose.position.y = t_W_C.at<double>(0);
+            pose.pose.position.z = -t_W_C.at<double>(1);
+
+            pose.pose.orientation.w = q_W_C.w();
+            pose.pose.orientation.x = q_W_C.x();
+            pose.pose.orientation.y = q_W_C.y();
+            pose.pose.orientation.z = q_W_C.z();
+            path.poses.push_back(pose);
+            this->path_pub->publish(path);
         }
         else    
             cout<<"Frame "<<this->iteration<<": Unable to solve pose estimation, ID: "<<this->next_id<<endl;
@@ -310,13 +314,19 @@ void StereoTracker::getPose(double timestamp)
 
 void StereoTracker::outputPose(string filename)
 {
+    // Solves IMU body frame -> world transformation
+    // Current pose of IMU body relative to world frame (starting pose of left camera)
+    cv::Mat R_W_B = R_W_C * R_C_B;
+    cv::Mat t_W_B = R_W_C * t_C_B + t_W_C;
+
     std::ofstream csv_file(filename);
     csv_file << "timestamp,p_x,p_y,p_z,q_w,q_x,q_y,q_z\n";
     csv_file << std::fixed << std::setprecision(6);
 
-    cout<<"VO estimate size: "<<this->estimate.size()<<endl;
+    cout<<"VO estimate size: "<<this->path.poses.size()<<endl;
     for (auto pose : this->estimate)
     {
+        // TODO: Change this->estimate with this->path.poses which is of type nav_msgs and rotate first from camera to body then to vicon
         Eigen::Vector3d vicon_pos = (R_init * pose.pos) + t_init;
         if (vicon_pos.norm() > 1e3)
             continue;
@@ -355,9 +365,9 @@ double StereoTracker::reprojectionError(string left_img_path)
     cv::projectPoints(object_points, rvec, tvec, K_left, D_left, projected_points);
     for (size_t i = 0; i < projected_points.size(); i++)
     {
-        cv::line(img_left, image_points[i], projected_points[i], cv::Scalar(255), 1);
-        cv::circle(img_left, image_points[i], 3, cv::Scalar(255), -1);
-        cv::circle(img_left, projected_points[i], 3, cv::Scalar(0), -1);
+        // cv::line(img_left, image_points[i], projected_points[i], cv::Scalar(255), 1);
+        // cv::circle(img_left, image_points[i], 3, cv::Scalar(255), -1);
+        // cv::circle(img_left, projected_points[i], 3, cv::Scalar(0), -1);
 
         double error = norm(projected_points[i] - image_points[i]);
         if (error > 10.0)
@@ -366,7 +376,7 @@ double StereoTracker::reprojectionError(string left_img_path)
         mean_abs_err += error;
     }
     mean_abs_err = mean_abs_err / projected_points.size();
-    cv::imshow("Reprojection error", img_left);
-    cv::waitKey(25);
+    // cv::imshow("Reprojection error", img_left);
+    // cv::waitKey(25);
     return mean_abs_err;
 }
