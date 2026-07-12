@@ -25,6 +25,12 @@ struct Feature
     Point2f right_pt;
 };
 
+struct Landmark
+{
+    Point3d pos;
+    int outlier_count = 0;
+};
+
 struct Pose
 {
     double timestamp;
@@ -41,7 +47,7 @@ class StereoTracker : public rclcpp::Node
         vector<int> prev_feature_ids;
         int next_id = 0;
         vector<Feature> current_matches;
-        unordered_map<int, cv::Point3d> global_map;
+        unordered_map<int, Landmark> global_map;
 
         const double b = 0.1101; // baseline in meters
         const int max_features = 150;
@@ -53,12 +59,12 @@ class StereoTracker : public rclcpp::Node
                                                 0, 457.296, 367.215,
                                                 0,  0,  1); // left intrinsic matrix
 
-        vector<double> D_left = {-0.28340811, 0.07395907, 0.00019359, 1.76187114e-05}; // left distortion coefficients
+        cv::Mat D_left = (cv::Mat_<double>(1, 4) << -0.28340811, 0.07395907, 0.00019359, 1.76187114e-05); // left distortion coefficients
         Mat K_right = (cv::Mat_<double>(3, 3) << 458.654,  0, 367.215,
                                                 0, 457.296, 248.375,
                                                 0,  0,  1);
 
-        vector<double> D_right = {-0.28368365,  0.07451284, -0.00010473, -3.55590700e-05};
+        cv::Mat D_right = (cv::Mat_<double>(1, 4) << -0.28368365,  0.07451284, -0.00010473, -3.55590700e-05);
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_pub;
 
         // Extrinsic matrix from left camera to body frame
@@ -80,6 +86,9 @@ class StereoTracker : public rclcpp::Node
         Eigen::Matrix3d R_init = q_init.toRotationMatrix();
         Eigen::Vector3d t_init{0.878612, 2.14247, 0.947262};
 
+        // World->Camera T, used in solvePnPRansac
+        cv::Mat rvec, tvec;
+
     public:
         StereoTracker(string nodeName);
         void processFrame(string left_img_path, string right_img_path);
@@ -92,6 +101,7 @@ class StereoTracker : public rclcpp::Node
         // Final pose estimate
         vector<Pose> estimate;
         void outputPose(string filename);
+        double reprojectionError(string left_img_path);
 
 };
 

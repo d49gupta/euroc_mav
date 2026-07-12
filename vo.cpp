@@ -3,6 +3,9 @@
 StereoTracker::StereoTracker(string nodeName) : Node(nodeName) 
 {
     this->point_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("/vo/point_cloud", 10);
+    this->rvec = cv::Mat::zeros(3, 1, CV_64F);
+    this->tvec = cv::Mat::zeros(3, 1, CV_64F);
+
     this->R_W_C = cv::Mat::eye(3, 3, CV_64F);
     this->t_W_C = cv::Mat::zeros(3, 1, CV_64F);
     // TODO: For initial frame, rotate to body->world frame and append that to estimate vector and also give in initial timestamp
@@ -15,6 +18,7 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
     cv::Mat right_img = cv::imread(right_img_path, IMREAD_GRAYSCALE);
     vector<cv::Point2f> kept_left_pts;
     vector<int> kept_ids;
+    bool keyframe = false;
 
     if (left_img.empty() || right_img.empty())
     {
@@ -58,6 +62,7 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
         }
     }
 
+    getPose(0);
     if (kept_left_pts.size() < (size_t)(max_features * 0.7)) // if there arent enough tracked features, get new ones
     {
         Mat mask = Mat::ones(left_img.size(), CV_8UC1); // one channel canvas of 1's size of image
@@ -67,11 +72,18 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
         vector<Point2f> new_pts;
         int features_to_find = max_features - kept_left_pts.size();
         triangulate(left_img, right_img, new_pts, features_to_find, mask, kept_left_pts, kept_ids); // find new features with the mask
+        keyframe = true;
     }
 
     prev_left_img = left_img;
     prev_left_feature_pts = kept_left_pts;
     prev_feature_ids = kept_ids;
+
+    if (keyframe)
+    {
+        double mae = reprojectionError(left_img_path);
+        cout<<"Keyframe "<<this->iteration<<", Reprojection MAE: "<<mae<<endl;
+    }
 }
 
 void StereoTracker::visualizeMatch(string left_img_path, string right_img_path)
@@ -163,24 +175,25 @@ void StereoTracker::triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Po
 
         // use z scaling factor to calculate 3D point
         double z = b / norm_disparity;
-        if (z < 0.2 || z > 30.0)
+        if (z < 0 || z > 5)
             continue;
 
         cv::Mat P_C = (cv::Mat_<double>(3, 1) << undistorted_left_pts[i].x * z, undistorted_left_pts[i].y * z, z); // 3D point in current left camera frame
         cv::Mat P_W_mat = R_W_C * P_C + t_W_C; // 3D point in world frame
         cv::Point3d P_W(P_W_mat.at<double>(0), P_W_mat.at<double>(1), P_W_mat.at<double>(2));
 
+        Landmark new_landmark;
+        new_landmark.pos = P_W;
         if (this->prev_left_img.empty())
-                global_map[i] = P_W; // For initial frame
+                global_map[i] = new_landmark; // For initial frame
         else 
             {
-                global_map[this->next_id] = P_W; // For key frame
+                global_map[this->next_id] = new_landmark; // For key frame
                 added_left_pts.push_back(kept_left_pts[i]);
                 added_ids.push_back(this->next_id);
                 this->next_id++;
             }
     }
-    cout<<"Keyframe "<<this->iteration<<endl;
     // publishPointCloud();
 }
 
@@ -203,9 +216,9 @@ void StereoTracker::publishPointCloud()
     for (const auto& [id, pt] : global_map)
     {
         // match to rviz frame for pointcloud visualization
-        *iter_x = static_cast<float>(pt.z);
-        *iter_y = static_cast<float>(pt.x);
-        *iter_z = static_cast<float>(-pt.y);
+        *iter_x = static_cast<float>(pt.pos.z);
+        *iter_y = static_cast<float>(pt.pos.x);
+        *iter_z = static_cast<float>(-pt.pos.y);
 
         ++iter_x; ++iter_y; ++iter_z;
     }
@@ -217,6 +230,7 @@ void StereoTracker::getPose(double timestamp)
 {
     std::vector<cv::Point3f> object_points; // 3D points in global map
     std::vector<cv::Point2f> image_points;  // 2D pixel locations
+    std::vector<int> kept_ids;
 
     for (size_t i = 0; i < current_matches.size(); i++)
     {
@@ -224,28 +238,48 @@ void StereoTracker::getPose(double timestamp)
 
         if (global_map.find(id) != global_map.end())
         {
-            cv::Point3d pt3d = global_map[id];
+            global_map[id].outlier_count++;
+            cv::Point3d pt3d = global_map[id].pos;
             object_points.push_back(cv::Point3f(pt3d.x, pt3d.y, pt3d.z));
             image_points.push_back(current_matches[i].left_pt);
+            kept_ids.push_back(id);
         }
     }
-    cv::Mat rvec, tvec;
+
     std::vector<int> inliers;
     if (object_points.size() >= 4)
     {
         // solvePnPRansac solves transformation matrix from world to camera frame
         // No need to propogate T since you're comparing to global map object points in world frame
-        bool success = cv::solvePnPRansac(object_points, image_points, K_left, D_left, rvec, tvec, false, 100, 8.0F, 0.99,inliers);
-
+        // inliers represent indices of points that are considered reliable (3D points and 2D points reliably match)
+        bool success = cv::solvePnPRansac(object_points, image_points, K_left, D_left, this->rvec, this->tvec, false, 100, 10.0F, 0.99, inliers);
+        for (int &inlier : inliers)
+            global_map[kept_ids[inlier]].outlier_count = 0;
+        
+        for (auto it = global_map.begin(); it != global_map.end();) // erase landmarks that are considered outliers for 3 or more consecutive frames
+        {
+            if (it->second.outlier_count >= 3)
+                it = global_map.erase(it);
+            else
+                ++it;
+        }
+        
+        // cout << "Frame " << iteration
+        //     << " Matches: " << current_matches.size()
+        //     << " Object Points: " << object_points.size()
+        //     << " Inliers: " << inliers.size()
+        //     << " Map size: " << global_map.size()
+        //     << endl;
+        
         if (success) 
         {
             cv::Mat R_C_W;
-            cv::Rodrigues(rvec, R_C_W);
+            cv::Rodrigues(this->rvec, R_C_W);
 
             // Invert to solve left camera -> world transformation
             // Current pose of left camera relative to world frame (starting pose of left camera)
             this->R_W_C = R_C_W.t();
-            this->t_W_C = -R_W_C * tvec;
+            this->t_W_C = -R_W_C * this->tvec;
 
             // Solves IMU body frame -> world transformation
             // Current pose of IMU body relative to world frame (starting pose of left camera)
@@ -292,4 +326,47 @@ void StereoTracker::outputPose(string filename)
         << vicon_orient.w() << ","<< vicon_orient.x() << ","<< vicon_orient.y() << ","<< vicon_orient.z() << "\n";
     }
     csv_file.close();
+}
+
+double StereoTracker::reprojectionError(string left_img_path)
+{
+    cv::Mat img_left = cv::imread(left_img_path, IMREAD_GRAYSCALE);
+    if (img_left.empty())
+    {
+        cerr << "Could not open or find the image!" << endl;
+        return 0;
+    }
+
+    vector<Point2d> image_points;
+    vector<Point3d> object_points;
+    vector<Point2d> projected_points;
+    vector<int> used_ids;
+    for (size_t a = 0; a < prev_feature_ids.size(); a++)
+    {
+        if (!global_map.count(prev_feature_ids[a]))
+            continue;
+        
+        image_points.push_back(prev_left_feature_pts[a]);
+        object_points.push_back(global_map[prev_feature_ids[a]].pos);
+        used_ids.push_back(prev_feature_ids[a]);
+    }
+
+    double mean_abs_err = 0;
+    cv::projectPoints(object_points, rvec, tvec, K_left, D_left, projected_points);
+    for (size_t i = 0; i < projected_points.size(); i++)
+    {
+        cv::line(img_left, image_points[i], projected_points[i], cv::Scalar(255), 1);
+        cv::circle(img_left, image_points[i], 3, cv::Scalar(255), -1);
+        cv::circle(img_left, projected_points[i], 3, cv::Scalar(0), -1);
+
+        double error = norm(projected_points[i] - image_points[i]);
+        if (error > 10.0)
+            global_map.erase(used_ids[i]);
+
+        mean_abs_err += error;
+    }
+    mean_abs_err = mean_abs_err / projected_points.size();
+    cv::imshow("Reprojection error", img_left);
+    cv::waitKey(25);
+    return mean_abs_err;
 }
