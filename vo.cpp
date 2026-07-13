@@ -212,7 +212,7 @@ void StereoTracker::publishMap()
     sensor_msgs::PointCloud2Iterator<float> iter_y(*pc2_msg, "y");
     sensor_msgs::PointCloud2Iterator<float> iter_z(*pc2_msg, "z");
 
-    for (const auto& [id, pt] : global_map)
+    for (const auto& [id, pt] : global_map) // change to iterate from a to next_id then get the 3D pos
     {
         // match to rviz frame for pointcloud visualization
         *iter_x = static_cast<float>(pt.pos.z);
@@ -252,26 +252,28 @@ void StereoTracker::getPose()
         // No need to propogate T since you're comparing to global map object points in world frame
         // inliers represent indices of points that are considered reliable (3D points and 2D points reliably match)
         bool success = cv::solvePnPRansac(object_points, image_points, K_left, D_left, this->rvec, this->tvec, false, 100, 10.0F, 0.99, inliers);
-        for (int &inlier : inliers)
-            global_map[kept_ids[inlier]].outlier_count = 0;
-        
-        for (auto it = global_map.begin(); it != global_map.end();) // erase landmarks that are considered outliers for 3 or more consecutive frames
-        {
-            if (it->second.outlier_count >= 3)
-                it = global_map.erase(it);
-            else
-                ++it;
-        }
-        
-        // cout << "Frame " << iteration
-        //     << " Matches: " << current_matches.size()
-        //     << " Object Points: " << object_points.size()
-        //     << " Inliers: " << inliers.size()
-        //     << " Map size: " << global_map.size()
-        //     << endl;
 
         if (success) 
         {
+            std::vector<cv::Point3f> object_points_inliers;
+            std::vector<cv::Point2f> image_points_inliers;
+
+            for (int &inlier : inliers)
+            {
+                object_points_inliers.push_back(object_points[inlier]);
+                image_points_inliers.push_back(image_points[inlier]);
+                global_map[kept_ids[inlier]].outlier_count = 0;
+            }
+        
+            for (auto it = global_map.begin(); it != global_map.end();) // erase landmarks that are considered outliers for 3 or more consecutive frames
+            {
+                if (it->second.outlier_count >= 3)
+                    it = global_map.erase(it);
+                else
+                    ++it;
+            }
+
+            cv::solvePnPRefineLM(object_points_inliers, image_points_inliers, K_left, D_left, this->rvec, this->tvec); // refine pose estimate by minimizing projection error using inliers from PnPRansac
             cv::Mat R_C_W;
             cv::Rodrigues(this->rvec, R_C_W);
 
@@ -314,26 +316,52 @@ void StereoTracker::getPose()
 
 void StereoTracker::outputPose(string filename)
 {
-    // Solves IMU body frame -> world transformation
-    // Current pose of IMU body relative to world frame (starting pose of left camera)
-    cv::Mat R_W_B = R_W_C * R_C_B;
-    cv::Mat t_W_B = R_W_C * t_C_B + t_W_C;
-
     std::ofstream csv_file(filename);
     csv_file << "timestamp,p_x,p_y,p_z,q_w,q_x,q_y,q_z\n";
     csv_file << std::fixed << std::setprecision(6);
 
-    cout<<"VO estimate size: "<<this->path.poses.size()<<endl;
-    for (auto pose : this->estimate)
+    cout << "VO estimate size: " << this->path.poses.size() << endl;
+
+    for (const auto &pose : this->path.poses)
     {
-        // TODO: Change this->estimate with this->path.poses which is of type nav_msgs and rotate first from camera to body then to vicon
-        Eigen::Vector3d vicon_pos = (R_init * pose.pos) + t_init;
-        if (vicon_pos.norm() > 1e3)
+        // Camera pose in world frame
+        Eigen::Vector3d p_W_C(pose.pose.position.x, pose.pose.position.y, pose.pose.position.z);
+
+        Eigen::Quaterniond q_W_C(pose.pose.orientation.w, pose.pose.orientation.x, pose.pose.orientation.y, pose.pose.orientation.z);
+        Eigen::Matrix3d R_W_C = q_W_C.toRotationMatrix();
+
+        Eigen::Matrix3d R_C_B_eigen;
+        R_C_B_eigen <<
+            R_C_B.at<double>(0,0), R_C_B.at<double>(0,1), R_C_B.at<double>(0,2),
+            R_C_B.at<double>(1,0), R_C_B.at<double>(1,1), R_C_B.at<double>(1,2),
+            R_C_B.at<double>(2,0), R_C_B.at<double>(2,1), R_C_B.at<double>(2,2);
+
+        Eigen::Vector3d t_C_B_eigen(
+            t_C_B.at<double>(0),
+            t_C_B.at<double>(1),
+            t_C_B.at<double>(2));
+
+        // Solves IMU body frame -> world transformation
+        // Current pose of IMU body relative to world frame (starting pose of left camera)
+        Eigen::Matrix3d R_W_B = R_W_C * R_C_B_eigen;
+        Eigen::Vector3d p_W_B = R_W_C * t_C_B_eigen + p_W_C;
+
+        // World -> Vicon
+        Eigen::Vector3d p_V_B = R_init * p_W_B + t_init;
+        Eigen::Quaterniond q_W_B(R_W_B);
+        Eigen::Quaterniond q_V_B = q_init * q_W_B;
+
+        if (p_V_B.norm() > 1e3)
             continue;
-        
-        Eigen::Quaterniond vicon_orient = q_init * pose.orient;
-        csv_file << pose.timestamp << ","<< vicon_pos.x() << ","<< vicon_pos.y() << ","<< vicon_pos.z() << ","
-        << vicon_orient.w() << ","<< vicon_orient.x() << ","<< vicon_orient.y() << ","<< vicon_orient.z() << "\n";
+
+        csv_file << pose.header.stamp.sec + pose.header.stamp.nanosec * 1e-9 << ","
+                << p_V_B.x() << ","
+                << p_V_B.y() << ","
+                << p_V_B.z() << ","
+                << q_V_B.w() << ","
+                << q_V_B.x() << ","
+                << q_V_B.y() << ","
+                << q_V_B.z() << "\n";
     }
     csv_file.close();
 }

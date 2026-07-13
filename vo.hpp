@@ -100,9 +100,6 @@ class StereoTracker : public rclcpp::Node
                         vector<cv::Point2f>& added_left_pts, vector<int>& added_ids);
         void publishMap();
         void getPose();
-
-        // Final pose estimate
-        vector<Pose> estimate;
         void outputPose(string filename);
         double reprojectionError(string left_img_path);
 
