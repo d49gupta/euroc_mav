@@ -76,15 +76,27 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
         keyframe = true;
     }
 
-    prev_left_img = left_img;
-    prev_left_feature_pts = kept_left_pts;
-    prev_feature_ids = kept_ids;
-
     if (keyframe)
     {
-        double mae = reprojectionError(left_img_path);
-        cout<<"Keyframe "<<this->iteration<<", Reprojection MAE: "<<mae<<endl;
+        this->numb_keyframes++;
+        this->avg_mae += reprojectionError(kept_left_pts, kept_ids);
     }
+
+    vector<cv::Point2f> filtered_left_pts;
+    vector<int> filtered_ids;
+
+    for (size_t i = 0; i < kept_ids.size(); i++)
+    {
+        if (!global_map.count(kept_ids[i]))
+            continue;
+        
+        filtered_left_pts.push_back(kept_left_pts[i]);
+        filtered_ids.push_back(kept_ids[i]);
+    }
+
+    prev_left_img = left_img;
+    prev_left_feature_pts = filtered_left_pts;
+    prev_feature_ids = filtered_ids;
 }
 
 void StereoTracker::visualizeMatch(string left_img_path, string right_img_path)
@@ -160,8 +172,10 @@ void StereoTracker::triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Po
 
     vector<Point2f> undistorted_left_pts;
     vector<Point2f> undistorted_right_pts;
-    // transforms 2D point into normalized 3D point through K^-1 (3D point divided by z depth)
-    undistortPoints(left_pts, undistorted_left_pts, K_left, D_left, Mat(), Mat());
+    // stereoRectify would virtually transform both cameras into a common rectified plane to directly take the disparity (horizontal epipolar line)
+    // this means camreas are coplanar, same orientation, baseline aligned along x-axis
+    // undistortPoints transforms 2D point into normalized 3D point through K^-1 (3D point divided by z depth)
+    undistortPoints(left_pts, undistorted_left_pts, K_left, D_left, Mat(), Mat()); // Pass in default rotation/translation since euroc cams are already rectifieds
     undistortPoints(kept_right_pts, undistorted_right_pts, K_right, D_right, Mat(), Mat());
 
     int numb_matches = min(kept_left_pts.size(), kept_right_pts.size());
@@ -252,6 +266,7 @@ void StereoTracker::getPose()
         // No need to propogate T since you're comparing to global map object points in world frame
         // inliers represent indices of points that are considered reliable (3D points and 2D points reliably match)
         bool success = cv::solvePnPRansac(object_points, image_points, K_left, D_left, this->rvec, this->tvec, false, 100, 10.0F, 0.99, inliers);
+        // TODO: Write to csv for all frames the inliers, MAE, size of object points
 
         if (success) 
         {
@@ -267,7 +282,7 @@ void StereoTracker::getPose()
         
             for (auto it = global_map.begin(); it != global_map.end();) // erase landmarks that are considered outliers for 3 or more consecutive frames
             {
-                if (it->second.outlier_count >= 3)
+                if (it->second.outlier_count >= FRAME_THRESH)
                     it = global_map.erase(it);
                 else
                     ++it;
@@ -366,7 +381,7 @@ void StereoTracker::outputPose(string filename)
     csv_file.close();
 }
 
-double StereoTracker::reprojectionError(string left_img_path)
+double StereoTracker::reprojectionError(string left_img_path, const vector<Point2f> curr_left_feature_pts, const vector<int> curr_feature_ids)
 {
     cv::Mat img_left = cv::imread(left_img_path, IMREAD_GRAYSCALE);
     if (img_left.empty())
@@ -379,32 +394,74 @@ double StereoTracker::reprojectionError(string left_img_path)
     vector<Point3d> object_points;
     vector<Point2d> projected_points;
     vector<int> used_ids;
-    for (size_t a = 0; a < prev_feature_ids.size(); a++)
+    for (size_t a = 0; a < curr_feature_ids.size(); a++)
     {
-        if (!global_map.count(prev_feature_ids[a]))
+        if (!global_map.count(curr_feature_ids[a]))
             continue;
         
-        image_points.push_back(prev_left_feature_pts[a]);
-        object_points.push_back(global_map[prev_feature_ids[a]].pos);
-        used_ids.push_back(prev_feature_ids[a]);
+        image_points.push_back(curr_left_feature_pts[a]);
+        object_points.push_back(global_map[curr_feature_ids[a]].pos);
+        used_ids.push_back(curr_feature_ids[a]);
     }
 
     double mean_abs_err = 0;
     cv::projectPoints(object_points, rvec, tvec, K_left, D_left, projected_points);
     for (size_t i = 0; i < projected_points.size(); i++)
     {
-        // cv::line(img_left, image_points[i], projected_points[i], cv::Scalar(255), 1);
-        // cv::circle(img_left, image_points[i], 3, cv::Scalar(255), -1);
-        // cv::circle(img_left, projected_points[i], 3, cv::Scalar(0), -1);
+        cv::line(img_left, image_points[i], projected_points[i], cv::Scalar(255), 1);
+        cv::circle(img_left, image_points[i], 3, cv::Scalar(255), -1);
+        cv::circle(img_left, projected_points[i], 3, cv::Scalar(0), -1);
 
         double error = norm(projected_points[i] - image_points[i]);
+
         if (error > 10.0)
+            global_map[used_ids[i]].reprojection_count++;
+        else
+            global_map[used_ids[i]].reprojection_count = 0;
+        
+        if (global_map[used_ids[i]].reprojection_count >= FRAME_THRESH)
             global_map.erase(used_ids[i]);
 
         mean_abs_err += error;
     }
     mean_abs_err = mean_abs_err / projected_points.size();
-    // cv::imshow("Reprojection error", img_left);
-    // cv::waitKey(25);
+    cv::imshow("Reprojection error", img_left);
+    cv::waitKey(25);
+    return mean_abs_err;
+}
+
+
+double StereoTracker::reprojectionError(const vector<Point2f> curr_left_feature_pts, const vector<int> curr_feature_ids)
+{
+    vector<Point2d> image_points;
+    vector<Point3d> object_points;
+    vector<Point2d> projected_points;
+    vector<int> used_ids;
+    for (size_t a = 0; a < curr_feature_ids.size(); a++)
+    {
+        if (!global_map.count(curr_feature_ids[a]))
+            continue;
+        
+        image_points.push_back(curr_left_feature_pts[a]);
+        object_points.push_back(global_map[curr_feature_ids[a]].pos);
+        used_ids.push_back(curr_feature_ids[a]);
+    }
+
+    double mean_abs_err = 0;
+    cv::projectPoints(object_points, rvec, tvec, K_left, D_left, projected_points);
+    for (size_t i = 0; i < projected_points.size(); i++)
+    {
+        double error = norm(projected_points[i] - image_points[i]);
+        if (error > 10.0)
+            global_map[used_ids[i]].reprojection_count++;
+        else
+            global_map[used_ids[i]].reprojection_count = 0;
+        
+        if (global_map[used_ids[i]].reprojection_count >= FRAME_THRESH)
+            global_map.erase(used_ids[i]);
+
+        mean_abs_err += error;
+    }
+    mean_abs_err = mean_abs_err / projected_points.size();
     return mean_abs_err;
 }

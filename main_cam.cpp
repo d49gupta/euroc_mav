@@ -11,7 +11,7 @@ int main(int argc, char **argv)
 
     auto stereo_tracker = std::make_shared<StereoTracker>("stereo_tracker");
     // for (size_t i = 0; i < reader->frame_cam_names.size() && rclcpp::ok(); i++)
-    for (size_t i = 0; i < 500 && rclcpp::ok(); i++)
+    for (size_t i = 0; i < 1000 && rclcpp::ok(); i++)
     {
         string left_path = reader->frame_cam_names[i][0];
         string right_path = reader->frame_cam_names[i][1];
@@ -19,7 +19,8 @@ int main(int argc, char **argv)
         // stereo_tracker->visualizeMatch(left_path, right_path);
         rclcpp::spin_some(stereo_tracker);
     }
-    
+    cout<<"Number of keyframes: "<<stereo_tracker->numb_keyframes<<" / "<<stereo_tracker->iteration<<endl;
+    cout<<"Average reprojection MAE: "<<double(stereo_tracker->avg_mae / (stereo_tracker->numb_keyframes))<<endl;
     stereo_tracker->outputPose("src/build/vo_estimate.csv");
     cv::destroyAllWindows();
     rclcpp::shutdown();

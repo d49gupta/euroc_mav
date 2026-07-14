@@ -22,8 +22,8 @@ int main()
     // class in one inherited class, using the base type to call this ahrs_estimate will still work
     std::unique_ptr<EKF_AHRS> iter1 = std::make_unique<EKF_AHRS>(imu_reader.data);
     iter1->ahrs_estimate();
-    iter1->quat_error("dead_reckoning.csv", gt_reader.gt_orient_data);
-    iter1->vec_error("euler.csv", iter1->euler_estimate, gt_reader.gt_euler_data);
-    iter1->vec_error("gyro_bias.csv", iter1->gyro_bias_estimate, gt_reader.gt_gyro_bias);
+    iter1->quat_error("src/build/dead_reckoning.csv", gt_reader.gt_orient_data);
+    iter1->vec_error("src/build/euler.csv", iter1->euler_estimate, gt_reader.gt_euler_data);
+    iter1->vec_error("src/build/gyro_bias.csv", iter1->gyro_bias_estimate, gt_reader.gt_gyro_bias);
     return 0;
 }

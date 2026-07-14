@@ -16,6 +16,8 @@
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <nav_msgs/msg/path.hpp>
 
+#define FRAME_THRESH 3
+
 using namespace std;
 using namespace cv;
 
@@ -26,10 +28,18 @@ struct Feature
     Point2f right_pt;
 };
 
+struct Observation
+{
+    int frame_id;
+    Point2f frame_location;
+};
+
 struct Landmark
 {
     Point3d pos;
     int outlier_count = 0;
+    int reprojection_count = 0;
+    vector<Observation> observations;
 };
 
 struct Pose
@@ -42,7 +52,6 @@ struct Pose
 class StereoTracker : public rclcpp::Node
 {
     private:
-        int iteration = 0;
         cv::Mat prev_left_img;
         vector<Point2f> prev_left_feature_pts;
         vector<int> prev_feature_ids;
@@ -101,8 +110,13 @@ class StereoTracker : public rclcpp::Node
         void publishMap();
         void getPose();
         void outputPose(string filename);
-        double reprojectionError(string left_img_path);
+        double reprojectionError(string left_img_path, const vector<Point2f> curr_left_feature_pts, const vector<int> curr_feature_ids);
+        double reprojectionError(const vector<Point2f> curr_left_feature_pts, const vector<int> curr_feature_ids);
 
+
+        int iteration = 0;
+        int numb_keyframes = 0;
+        double avg_mae = 0;
 };
 
 #endif
