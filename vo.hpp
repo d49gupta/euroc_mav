@@ -16,7 +16,9 @@
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <nav_msgs/msg/path.hpp>
 
-#define FRAME_THRESH 3
+#define FRAME_THRESH 5
+#define REPROJ_ERR 20
+#define FEATURE_THRESH 0.5
 
 using namespace std;
 using namespace cv;
@@ -44,9 +46,8 @@ struct Landmark
 
 struct Pose
 {
-    double timestamp;
-    Eigen::Vector3d pos;
-    Eigen::Quaterniond orient;
+    cv::Mat rotation;
+    cv::Mat translation;
 };
 
 class StereoTracker : public rclcpp::Node
@@ -78,6 +79,7 @@ class StereoTracker : public rclcpp::Node
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_pub;
         rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub;
         nav_msgs::msg::Path path;
+        unordered_map<int, Pose> camera_pose;
 
         // Extrinsic matrix from left camera to body frame
         cv::Mat R_B_C = (cv::Mat_<double>(3, 3) << 0.0148655429818, -0.999880929698,  0.00414029679422,
@@ -113,8 +115,7 @@ class StereoTracker : public rclcpp::Node
         double reprojectionError(string left_img_path, const vector<Point2f> curr_left_feature_pts, const vector<int> curr_feature_ids);
         double reprojectionError(const vector<Point2f> curr_left_feature_pts, const vector<int> curr_feature_ids);
 
-
-        int iteration = 0;
+        int frame_id = -1;
         int numb_keyframes = 0;
         double avg_mae = 0;
 };

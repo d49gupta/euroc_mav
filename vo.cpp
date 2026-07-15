@@ -14,6 +14,7 @@ StereoTracker::StereoTracker(string nodeName) : Node(nodeName)
 
 void StereoTracker::processFrame(string left_img_path, string right_img_path)
 {
+    this->frame_id++;
     current_matches.clear();
     cv::Mat left_img = cv::imread(left_img_path, IMREAD_GRAYSCALE);
     cv::Mat right_img = cv::imread(right_img_path, IMREAD_GRAYSCALE);
@@ -64,7 +65,7 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
     }
 
     getPose();
-    if (kept_left_pts.size() < (size_t)(max_features * 0.7)) // if there arent enough tracked features, get new ones
+    if (kept_left_pts.size() < (size_t)(max_features * FEATURE_THRESH)) // if there arent enough tracked features, get new ones
     {
         Mat mask = Mat::ones(left_img.size(), CV_8UC1); // one channel canvas of 1's size of image
         for (const auto& pt : kept_left_pts)
@@ -200,7 +201,7 @@ void StereoTracker::triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Po
         Landmark new_landmark;
         new_landmark.pos = P_W;
         if (this->prev_left_img.empty())
-                global_map[i] = new_landmark; // For initial frame
+                global_map[prev_feature_ids[i]] = new_landmark; // For initial frame
         else 
             {
                 global_map[this->next_id] = new_landmark; // For key frame
@@ -248,7 +249,6 @@ void StereoTracker::getPose()
     for (size_t i = 0; i < current_matches.size(); i++)
     {
         int id = current_matches[i].id;
-
         if (global_map.find(id) != global_map.end())
         {
             global_map[id].outlier_count++;
@@ -275,9 +275,16 @@ void StereoTracker::getPose()
 
             for (int &inlier : inliers)
             {
+                int id = kept_ids[inlier];
+                Observation feature_observation; // only add feature observations if its considered a RANSAC inlier
+                feature_observation.frame_id = this->frame_id;
+                feature_observation.frame_location = image_points[inlier];
+
                 object_points_inliers.push_back(object_points[inlier]);
                 image_points_inliers.push_back(image_points[inlier]);
-                global_map[kept_ids[inlier]].outlier_count = 0;
+
+                global_map[id].outlier_count = 0;
+                global_map[id].observations.push_back(feature_observation);
             }
         
             for (auto it = global_map.begin(); it != global_map.end();) // erase landmarks that are considered outliers for 3 or more consecutive frames
@@ -291,6 +298,11 @@ void StereoTracker::getPose()
             cv::solvePnPRefineLM(object_points_inliers, image_points_inliers, K_left, D_left, this->rvec, this->tvec); // refine pose estimate by minimizing projection error using inliers from PnPRansac
             cv::Mat R_C_W;
             cv::Rodrigues(this->rvec, R_C_W);
+
+            Pose inv_cam_pose;
+            inv_cam_pose.translation = this->tvec;
+            inv_cam_pose.rotation = R_C_W;
+            camera_pose[this->frame_id] = inv_cam_pose;
 
             // Invert to solve left camera -> world transformation
             // Current pose of left camera relative to world frame (starting pose of left camera)
@@ -321,12 +333,12 @@ void StereoTracker::getPose()
             this->path_pub->publish(path);
         }
         else    
-            cout<<"Frame "<<this->iteration<<": Unable to solve pose estimation, ID: "<<this->next_id<<endl;
+            cout<<"Frame "<<this->frame_id<<": Unable to solve pose estimation, ID: "<<this->next_id<<endl;
     }
     else
-        cout<<"Frame "<<this->iteration<<": Not enough matches to solve pose estimation"<<endl;
+        cout<<"Frame "<<this->frame_id<<": Not enough matches to solve pose estimation"<<endl;
 
-    this->iteration++;
+    cout<<"Frame "<<this->frame_id<<endl;
 }
 
 void StereoTracker::outputPose(string filename)
@@ -414,7 +426,7 @@ double StereoTracker::reprojectionError(string left_img_path, const vector<Point
 
         double error = norm(projected_points[i] - image_points[i]);
 
-        if (error > 10.0)
+        if (error >= REPROJ_ERR)
             global_map[used_ids[i]].reprojection_count++;
         else
             global_map[used_ids[i]].reprojection_count = 0;
@@ -452,7 +464,7 @@ double StereoTracker::reprojectionError(const vector<Point2f> curr_left_feature_
     for (size_t i = 0; i < projected_points.size(); i++)
     {
         double error = norm(projected_points[i] - image_points[i]);
-        if (error > 10.0)
+        if (error >= REPROJ_ERR)
             global_map[used_ids[i]].reprojection_count++;
         else
             global_map[used_ids[i]].reprojection_count = 0;
