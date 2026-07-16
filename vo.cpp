@@ -11,6 +11,11 @@ StereoTracker::StereoTracker(string nodeName) : Node(nodeName)
     this->R_W_C = cv::Mat::eye(3, 3, CV_64F);
     this->t_W_C = cv::Mat::zeros(3, 1, CV_64F);
 
+    Pose inv_cam_pose;
+    inv_cam_pose.translation = this->tvec.clone();
+    inv_cam_pose.rotation = R_W_C.clone(); // same as R_C_W since identity matrix at t=0
+    camera_pose[this->frame_id] = inv_cam_pose;
+
     optimization_log.open("src/build/landmark_optimization.csv");
     optimization_log
         << "keyframe,landmark_id,observations,iteration,"
@@ -21,11 +26,20 @@ StereoTracker::StereoTracker(string nodeName) : Node(nodeName)
                    R_left_right, t_left_right,
                    R1, R2, P1, P2, Q,
                    cv::CALIB_ZERO_DISPARITY, -1, image_size);
+
+    // Vicon marker pose in the VO's world frame at t=0 
+    // composed with the camera->body and body->marker static extrinsics since camera to world is I at t=0
+    Eigen::Matrix3d R_worldVO_marker0 = R_C_B0_eigen * R_B_V;
+    Eigen::Vector3d t_worldVO_marker0 = R_C_B0_eigen * t_B_V + t_C_B0_eigen;
+
+    // Maps world -> room by chaining (world->marker and marker->room)
+    Eigen::Matrix3d R_gt0 = q_gt0.toRotationMatrix();
+    this->R_init = R_gt0 * R_worldVO_marker0.transpose();
+    this->t_init = t_gt0 - R_init * t_worldVO_marker0;
 }
 
-void StereoTracker::processFrame(string left_img_path, string right_img_path)
+void StereoTracker::processFrame(string left_img_path, string right_img_path, uint64_t timestep)
 {
-    this->frame_id++;
     current_matches.clear();
     cv::Mat left_img = cv::imread(left_img_path, IMREAD_GRAYSCALE);
     cv::Mat right_img = cv::imread(right_img_path, IMREAD_GRAYSCALE);
@@ -46,6 +60,7 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
         return;
     }
 
+    this->frame_id++;
     vector<Point2f> curr_left_pts;
     vector<uchar> status_temporal;
     vector<float> err_temporal;
@@ -75,7 +90,7 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
         }
     }
 
-    getPose();
+    getPose(timestep);
     if (kept_left_pts.size() < (size_t)(max_features * FEATURE_THRESH)) // if there arent enough tracked features, get new ones
     {
         Mat mask = Mat::ones(left_img.size(), CV_8UC1); // one channel canvas of 1's size of image
@@ -94,7 +109,6 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
         this->avg_mae += reprojectionError(kept_left_pts, kept_ids);
         optimizeLandmark();
     }
-
     vector<cv::Point2f> filtered_left_pts;
     vector<int> filtered_ids;
 
@@ -209,7 +223,7 @@ void StereoTracker::triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Po
 
         // use z scaling factor to calculate 3D point
         double z = fx_rect * baseline / disparity_px;
-        if (z < 0 || z > 5)
+        if (z < 0 || z > 15)
             continue;
 
         double x = (undistorted_left_pts[i].x - cx_rect) * z / fx_rect;
@@ -261,7 +275,7 @@ void StereoTracker::publishMap()
     this->point_cloud_pub->publish(*pc2_msg);
 }
 
-void StereoTracker::getPose()
+void StereoTracker::getPose(uint64_t timestep)
 {
     std::vector<cv::Point3f> object_points; // 3D points in global map
     std::vector<cv::Point2f> image_points;  // 2D pixel locations
@@ -272,7 +286,6 @@ void StereoTracker::getPose()
         int id = current_matches[i].id;
         if (global_map.find(id) != global_map.end())
         {
-            global_map[id].outlier_count++;
             cv::Point3d pt3d = global_map[id].pos;
             object_points.push_back(cv::Point3f(pt3d.x, pt3d.y, pt3d.z));
             image_points.push_back(current_matches[i].left_pt);
@@ -287,22 +300,33 @@ void StereoTracker::getPose()
         // No need to propogate T since you're comparing to global map object points in world frame
         // inliers represent indices of points that are considered reliable (3D points and 2D points reliably match)
         bool success = cv::solvePnPRansac(object_points, image_points, K_left, D_left, this->rvec, this->tvec, false, 100, 10.0F, 0.99, inliers);
-        // TODO: Write to csv for all frames the inliers, MAE, size of object points
 
         if (success) 
         {
             std::vector<cv::Point3f> object_points_inliers;
             std::vector<cv::Point2f> image_points_inliers;
             vector<int> inlier_ids;
+            vector<bool> is_inlier(kept_ids.size(), false);
 
             for (int &inlier : inliers)
             {
                 int id = kept_ids[inlier];
                 inlier_ids.push_back(id);
+                is_inlier[inlier] = true;
                 object_points_inliers.push_back(object_points[inlier]);
                 image_points_inliers.push_back(image_points[inlier]);
                 global_map[id].outlier_count = 0;
             }
+
+            for (size_t i = 0; i < kept_ids.size(); i++) // landmarks RANSAC saw but rejected as outliers this frame
+            {
+                if (!is_inlier[i])
+                    global_map[kept_ids[i]].outlier_count++;
+            }
+
+            cv::Mat R_C_W_provisional;
+            cv::Rodrigues(this->rvec, R_C_W_provisional);
+            camera_pose[this->frame_id] = { R_C_W_provisional.clone(), this->tvec.clone() }; // provisional camera pose to estimate parallax
 
             vector<Point2f> undistorted_left_inliers;
             undistortPoints(image_points_inliers, undistorted_left_inliers, K_left, D_left, Mat(), Mat()); // Pass in undistorted points in camera frame not rectified frame
@@ -312,7 +336,15 @@ void StereoTracker::getPose()
                 feature_observation.frame_id = this->frame_id;
                 feature_observation.frame_location = undistorted_left_inliers[a]; // store normalized coordinates
 
-                auto& obs_vector = global_map[inlier_ids[a]].observations;
+                auto& landmark = global_map[inlier_ids[a]];
+                if (!landmark.observations.empty())
+                {
+                    double parallax = computeParallax(landmark.pos, landmark.observations.back(), feature_observation);
+                    if (parallax < MIN_PARALLAX_APPEND_RAD)
+                        continue;
+                }
+
+                auto& obs_vector = landmark.observations;
                 if (obs_vector.size() >= MAX_OBSERVATIONS)
                     obs_vector.erase(obs_vector.begin()); // use sliding window if landmark observations exceeds limit
 
@@ -332,8 +364,8 @@ void StereoTracker::getPose()
             cv::Rodrigues(this->rvec, R_C_W);
 
             Pose inv_cam_pose;
-            inv_cam_pose.translation = this->tvec;
-            inv_cam_pose.rotation = R_C_W;
+            inv_cam_pose.translation = this->tvec.clone();
+            inv_cam_pose.rotation = R_C_W.clone();
             camera_pose[this->frame_id] = inv_cam_pose;
 
             // Invert to solve left camera -> world transformation
@@ -348,7 +380,8 @@ void StereoTracker::getPose()
             Eigen::Quaterniond q_W_C(rotation); // body -> world
             
             geometry_msgs::msg::PoseStamped pose;
-            pose.header.stamp = rclcpp::Clock().now();
+            pose.header.stamp.sec = static_cast<int32_t>(timestep / 1000000000ULL);
+            pose.header.stamp.nanosec = static_cast<uint32_t>(timestep % 1000000000ULL);
             pose.header.frame_id = "map";
             path.header.stamp = pose.header.stamp;
 
@@ -389,38 +422,32 @@ void StereoTracker::outputPose(string filename)
         Eigen::Quaterniond q_W_C(pose.pose.orientation.w, pose.pose.orientation.x, pose.pose.orientation.y, pose.pose.orientation.z);
         Eigen::Matrix3d R_W_C = q_W_C.toRotationMatrix();
 
-        Eigen::Matrix3d R_C_B0_eigen;
-        R_C_B0_eigen <<
-            R_C_B0.at<double>(0,0), R_C_B0.at<double>(0,1), R_C_B0.at<double>(0,2),
-            R_C_B0.at<double>(1,0), R_C_B0.at<double>(1,1), R_C_B0.at<double>(1,2),
-            R_C_B0.at<double>(2,0), R_C_B0.at<double>(2,1), R_C_B0.at<double>(2,2);
-
-        Eigen::Vector3d t_C_B0_eigen(
-            t_C_B0.at<double>(0),
-            t_C_B0.at<double>(1),
-            t_C_B0.at<double>(2));
-
         // Solves IMU body frame -> world transformation
         // Current pose of IMU body relative to world frame (starting pose of left camera)
         Eigen::Matrix3d R_W_B = R_W_C * R_C_B0_eigen;
         Eigen::Vector3d p_W_B = R_W_C * t_C_B0_eigen + p_W_C;
 
-        // World -> Vicon
-        Eigen::Vector3d p_V_B = R_init * p_W_B + t_init;
-        Eigen::Quaterniond q_W_B(R_W_B);
-        Eigen::Quaterniond q_V_B = q_init * q_W_B;
+        // Vicon marker pose in the VO's world frame: compose the current body pose
+        // with the marker's rigid mounting offset (forward T_BS, recovered from R_V_B/t_V_B)
+        Eigen::Matrix3d R_W_V = R_W_B * R_B_V;
+        Eigen::Vector3d p_W_V = R_W_B * t_B_V + p_W_B;
 
-        if (p_V_B.norm() > 1e3)
+        // Align into the Vicon room frame using the t=0 ground-truth anchor (vicon -> world then world -> room)
+        Eigen::Matrix3d R_room_V = R_init * R_W_V;
+        Eigen::Vector3d p_room_V = R_init * p_W_V + t_init;
+        Eigen::Quaterniond q_room_V(R_room_V);
+
+        if (p_room_V.norm() > 1e3)
             continue;
 
         csv_file << pose.header.stamp.sec + pose.header.stamp.nanosec * 1e-9 << ","
-                << p_V_B.x() << ","
-                << p_V_B.y() << ","
-                << p_V_B.z() << ","
-                << q_V_B.w() << ","
-                << q_V_B.x() << ","
-                << q_V_B.y() << ","
-                << q_V_B.z() << "\n";
+                << p_room_V.x() << ","
+                << p_room_V.y() << ","
+                << p_room_V.z() << ","
+                << q_room_V.w() << ","
+                << q_room_V.x() << ","
+                << q_room_V.y() << ","
+                << q_room_V.z() << "\n";
     }
     csv_file.close();
 }
@@ -468,12 +495,11 @@ double StereoTracker::reprojectionError(string left_img_path, const vector<Point
 
         mean_abs_err += error;
     }
-    mean_abs_err = mean_abs_err / projected_points.size();
+    mean_abs_err = projected_points.size() > 0 ? mean_abs_err / projected_points.size() : 0.0;
     cv::imshow("Reprojection error", img_left);
     cv::waitKey(25);
     return mean_abs_err;
 }
-
 
 double StereoTracker::reprojectionError(const vector<Point2f> curr_left_feature_pts, const vector<int> curr_feature_ids)
 {
@@ -506,29 +532,77 @@ double StereoTracker::reprojectionError(const vector<Point2f> curr_left_feature_
 
         mean_abs_err += error;
     }
-    mean_abs_err = mean_abs_err / projected_points.size();
+    mean_abs_err = projected_points.size() > 0 ? mean_abs_err / projected_points.size() : 0.0;
     return mean_abs_err;
+}
+
+double StereoTracker::computeError(const cv::Point3d& pos, vector<Observation>& observations)
+{
+    double total_err = 0.0;
+    cv::Mat P_W = (cv::Mat_<double>(3, 1) << pos.x, pos.y, pos.z);
+
+    for (const auto& observation : observations)
+    {
+        Pose curr_camera_pose = camera_pose[observation.frame_id];
+        cv::Mat P_C = curr_camera_pose.rotation * P_W + curr_camera_pose.translation;
+
+        double zc = P_C.at<double>(2);
+        if (zc <= 1e-4) continue;
+
+        double u_proj = P_C.at<double>(0) / zc;
+        double v_proj = P_C.at<double>(1) / zc;
+
+        cv::Mat residual = (cv::Mat_<double>(2, 1) <<
+            (observation.frame_location.x - u_proj),
+            (observation.frame_location.y - v_proj));
+
+        total_err += cv::norm(residual);
+    }
+    return total_err;
+};
+
+double StereoTracker::computeParallax(const cv::Point3d& pos, const Observation& obs1, const Observation& obs2)
+{
+    cv::Mat P_W = (cv::Mat_<double>(3,1) << pos.x, pos.y, pos.z);
+
+    const Pose& pose1 = camera_pose[obs1.frame_id];
+    const Pose& pose2 = camera_pose[obs2.frame_id];
+
+    cv::Mat C1 = -pose1.rotation.t() * pose1.translation; // camera center in world frame
+    cv::Mat C2 = -pose2.rotation.t() * pose2.translation;
+
+    cv::Mat ray1 = P_W - C1;
+    cv::Mat ray2 = P_W - C2;
+
+    double cos_parallax = ray1.dot(ray2) / (cv::norm(ray1) * cv::norm(ray2));
+    cos_parallax = std::clamp(cos_parallax, -1.0, 1.0); // guard fp rounding past [-1,1]
+    return std::acos(cos_parallax); // radians
 }
 
 void StereoTracker::optimizeLandmark()
 {
-    const int MAX_ITERATIONS = 5;
+    const int MAX_ITERATIONS = 5; // check parallax angle between firsst and last observation to see if worht optimizing
 
     for (auto& [id, landmark] : global_map)
     {
         if (landmark.observations.size() < OBSERVATION_THRESH) 
             continue;
         
-        bool recent_observation = (this->frame_id - landmark.observations.back().frame_id) < 20;
-        if (!recent_observation)
+        if (landmark.observations.back().frame_id <= landmark.last_optimized_frame) // no new observation since last optimization
             continue;
         
-        // TODO: Change to LM later with dynamic lambda based off reprojcetion error
-        double lambda = 1e-2; // dx = b / lambda, the larger lambda, the smaller the step size correction
+        double parallax = computeParallax(landmark.pos, landmark.observations.front(), landmark.observations.back());
+        if (parallax < MIN_PARALLAX_REFINE_RAD)
+            continue;
+        
+        double current_error = computeError(landmark.pos, landmark.observations);
+        double lambda = 1e-4; // dx = b / lambda, the larger lambda, the smaller the step size correction
+        landmark.last_optimized_frame = this->frame_id;
         for (int iter = 0; iter < MAX_ITERATIONS; ++iter)
         {
             double total_error = 0.0;
             double max_error = 0.0;
+            double sum_zc = 0.0;
             int valid_obs = 0;
 
             cv::Mat H = cv::Mat::zeros(3, 3, CV_64F);
@@ -561,8 +635,9 @@ void StereoTracker::optimizeLandmark()
                     (observation.frame_location.y - v_proj));
 
                 double error = cv::norm(residual);
-                total_error += norm(error);
+                total_error += error;
                 max_error = max(max_error, error);
+                sum_zc += zc;
                 valid_obs++;
 
                 H += J.t() * J;
@@ -577,9 +652,20 @@ void StereoTracker::optimizeLandmark()
                 break;
 
             double dx_norm = norm(dx);
-            landmark.pos.x -= dx.at<double>(0);
-            landmark.pos.y -= dx.at<double>(1);
-            landmark.pos.z -= dx.at<double>(2);
+            double avg_zc = valid_obs > 0 ? sum_zc / valid_obs : 1.0;
+            const double MAX_DX_FRACTION = 0.5; // cap correction to a fraction of average landmark depth
+            double max_dx = MAX_DX_FRACTION * avg_zc;
+            if (dx_norm > max_dx)
+            {
+                dx *= (max_dx / dx_norm);
+                dx_norm = max_dx;
+            }
+
+            Point3d candidate_pos = landmark.pos;
+            candidate_pos.x += dx.at<double>(0);
+            candidate_pos.y += dx.at<double>(1);
+            candidate_pos.z += dx.at<double>(2);
+            double new_error = computeError(candidate_pos, landmark.observations);
 
             optimization_log
             << numb_keyframes << ","
@@ -594,9 +680,18 @@ void StereoTracker::optimizeLandmark()
             << landmark.pos.z
             << "\n";
 
-            double step_norm = cv::norm(dx);
-            if (step_norm < 1e-5) // landmark has converged, stop iterations
-                break; 
+            if (new_error < current_error)
+            {
+                landmark.pos = candidate_pos;
+                current_error = new_error;
+                lambda *= 0.5;
+                if (cv::norm(dx) < 1e-5) // landmark has converged, stop iterations
+                    break;
+            }
+            else
+            {
+                lambda *= 2.0;
+            }
         }
     }
 }

@@ -21,6 +21,8 @@
 #define FEATURE_THRESH 0.5
 #define OBSERVATION_THRESH 5
 #define MAX_OBSERVATIONS 15
+#define MIN_PARALLAX_APPEND_RAD 0.0034906585 // 0.2 degs
+#define MIN_PARALLAX_REFINE_RAD 0.0174532925 // 1 degree
 
 using namespace std;
 using namespace cv;
@@ -44,6 +46,7 @@ struct Landmark
     int outlier_count = 0;
     int reprojection_count = 0;
     vector<Observation> observations;
+    int last_optimized_frame = -1;
 };
 
 struct Pose
@@ -99,6 +102,12 @@ class StereoTracker : public rclcpp::Node
         cv::Mat R_C_B0 = R_B_C0.t();
         cv::Mat t_C_B0 = -R_B_C0.t() * t_B_C0;
 
+        Eigen::Matrix3d R_C_B0_eigen = (Eigen::Matrix3d() <<
+            R_C_B0.at<double>(0,0), R_C_B0.at<double>(0,1), R_C_B0.at<double>(0,2),
+            R_C_B0.at<double>(1,0), R_C_B0.at<double>(1,1), R_C_B0.at<double>(1,2),
+            R_C_B0.at<double>(2,0), R_C_B0.at<double>(2,1), R_C_B0.at<double>(2,2)).finished();
+        Eigen::Vector3d t_C_B0_eigen{t_C_B0.at<double>(0), t_C_B0.at<double>(1), t_C_B0.at<double>(2)};
+
         // Transformation matrix: left camera -> world transformation
         cv::Mat R_W_C;
         cv::Mat t_W_C;
@@ -109,10 +118,34 @@ class StereoTracker : public rclcpp::Node
         cv::Mat R1, R2, P1, P2, Q;
         cv::Size image_size{752, 480};
 
-        // Initial orientation  and translation to align Vicon Frame with world frame
-        Eigen::Quaterniond q_init{0.993217, -0.00929, 0.022669, 0.113664};
-        Eigen::Matrix3d R_init = q_init.toRotationMatrix();
-        Eigen::Vector3d t_init{0.786802375, 2.176626308, 1.06203836};
+        // Transformation from body->vicon frame
+        cv::Mat R_V_B = (cv::Mat_<double>(3, 3) <<
+            0.33638, -0.02078,  0.94150,
+            -0.01749, -0.99972, -0.01582,
+            0.94156, -0.01114, -0.33665);
+
+        cv::Mat t_V_B = (cv::Mat_<double>(3, 1) <<
+            0.092907, -0.028556, -0.107015);
+
+        Eigen::Matrix3d R_V_B_eigen = (Eigen::Matrix3d() <<
+            R_V_B.at<double>(0,0), R_V_B.at<double>(0,1), R_V_B.at<double>(0,2),
+            R_V_B.at<double>(1,0), R_V_B.at<double>(1,1), R_V_B.at<double>(1,2),
+            R_V_B.at<double>(2,0), R_V_B.at<double>(2,1), R_V_B.at<double>(2,2)).finished();
+        Eigen::Quaterniond q_V_B{R_V_B_eigen};
+
+        // Forward T_BS (vicon marker -> body), recovered by inverting R_V_B/t_V_B
+        Eigen::Matrix3d R_B_V = R_V_B_eigen.transpose();
+        Eigen::Vector3d t_V_B_eigen{t_V_B.at<double>(0), t_V_B.at<double>(1), t_V_B.at<double>(2)};
+        Eigen::Vector3d t_B_V = -R_B_V * t_V_B_eigen;
+
+        // Ground truth vicon marker pose at t=0 (vicon0/data.csv, timestamp 1403715273265220000)
+        // Maps vicon marker -> room (ground truth)
+        Eigen::Quaterniond q_gt0{0.993271232, -0.008876672, 0.022388759, 0.113279336};
+        Eigen::Vector3d t_gt0{0.786659422, 2.176692611, 1.061934815};
+
+        // World(VO) -> Vicon room-frame alignment, derived in the constructor from q_gt0/t_gt0
+        Eigen::Matrix3d R_init;
+        Eigen::Vector3d t_init;
 
         // World->Camera T, used in solvePnPRansac
         cv::Mat rvec, tvec;
@@ -120,12 +153,12 @@ class StereoTracker : public rclcpp::Node
 
     public:
         StereoTracker(string nodeName);
-        void processFrame(string left_img_path, string right_img_path);
+        void processFrame(string left_img_path, string right_img_path, uint64_t timestep);
         void visualizeMatch(string left_img_path, string right_img_path);
         void triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Point2f>& feature_pts, const int numb_features, const cv::Mat& mask, 
                         vector<cv::Point2f>& added_left_pts, vector<int>& added_ids);
         void publishMap();
-        void getPose();
+        void getPose(uint64_t timestep);
         void outputPose(string filename);
         double reprojectionError(string left_img_path, const vector<Point2f> curr_left_feature_pts, const vector<int> curr_feature_ids);
         double reprojectionError(const vector<Point2f> curr_left_feature_pts, const vector<int> curr_feature_ids);
@@ -134,8 +167,10 @@ class StereoTracker : public rclcpp::Node
         {
             optimization_log.close();
         }
+        double computeError(const cv::Point3d& pos, vector<Observation>& observations);
+        double computeParallax(const cv::Point3d& pos, const Observation& obs1, const Observation& obs2);
 
-        int frame_id = -1;
+        int frame_id = 0;
         int numb_keyframes = 0;
         double avg_mae = 0;
 };

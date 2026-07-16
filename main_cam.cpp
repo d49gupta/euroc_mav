@@ -15,7 +15,8 @@ int main(int argc, char **argv)
     {
         string left_path = reader->frame_cam_names[i][0];
         string right_path = reader->frame_cam_names[i][1];
-        stereo_tracker->processFrame(left_path, right_path);
+        uint64_t timestamp = reader->frame_cam_timestamp[i][0];
+        stereo_tracker->processFrame(left_path, right_path, timestamp);
         // stereo_tracker->visualizeMatch(left_path, right_path);
         rclcpp::spin_some(stereo_tracker);
     }
