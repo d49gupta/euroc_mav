@@ -10,6 +10,17 @@ StereoTracker::StereoTracker(string nodeName) : Node(nodeName)
     this->tvec = cv::Mat::zeros(3, 1, CV_64F);
     this->R_W_C = cv::Mat::eye(3, 3, CV_64F);
     this->t_W_C = cv::Mat::zeros(3, 1, CV_64F);
+
+    optimization_log.open("src/build/landmark_optimization.csv");
+    optimization_log
+        << "keyframe,landmark_id,observations,iteration,"
+        << "mean_residual,max_residual,dx_norm,"
+        << "x,y,z\n";
+
+    cv::stereoRectify(K_left, D_left, K_right, D_right, image_size,
+                   R_left_right, t_left_right,
+                   R1, R2, P1, P2, Q,
+                   cv::CALIB_ZERO_DISPARITY, -1, image_size);
 }
 
 void StereoTracker::processFrame(string left_img_path, string right_img_path)
@@ -81,6 +92,7 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path)
     {
         this->numb_keyframes++;
         this->avg_mae += reprojectionError(kept_left_pts, kept_ids);
+        optimizeLandmark();
     }
 
     vector<cv::Point2f> filtered_left_pts;
@@ -176,25 +188,34 @@ void StereoTracker::triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Po
     // stereoRectify would virtually transform both cameras into a common rectified plane to directly take the disparity (horizontal epipolar line)
     // this means camreas are coplanar, same orientation, baseline aligned along x-axis
     // undistortPoints transforms 2D point into normalized 3D point through K^-1 (3D point divided by z depth)
-    undistortPoints(left_pts, undistorted_left_pts, K_left, D_left, Mat(), Mat()); // Pass in default rotation/translation since euroc cams are already rectifieds
-    undistortPoints(kept_right_pts, undistorted_right_pts, K_right, D_right, Mat(), Mat());
-
+    undistortPoints(left_pts, undistorted_left_pts, K_left, D_left, R1, P1); // R is rotation matrix between each camera frame and rectified frame
+    undistortPoints(kept_right_pts, undistorted_right_pts, K_right, D_right, R2, P2); // P is the projection matrix (intrinsics + position) between each camera frame and rectified frame
+        
+    double fx_rect = P1.at<double>(0, 0);
+    double fy_rect = P1.at<double>(1, 1);
+    double cx_rect = P1.at<double>(0, 2);
+    double cy_rect = P1.at<double>(1, 2);
+    double baseline = -P2.at<double>(0, 3) / P2.at<double>(0, 0);
     int numb_matches = min(kept_left_pts.size(), kept_right_pts.size());
+    
     for (int i = 0; i < numb_matches; i++)
     {
         // can do this since left and right pixel coordinates are seperated by constant offset (x=200 in left image represents 200+disparity in right image)
         // only works if both cameras share same dimensions (length x width)
-        double norm_disparity = undistorted_left_pts[i].x - undistorted_right_pts[i].x;
+        double disparity_px = undistorted_left_pts[i].x - undistorted_right_pts[i].x;
         
-        if (!std::isfinite(norm_disparity) || norm_disparity <= 1e-3) 
+        if (!std::isfinite(disparity_px) || disparity_px <= 1e-3) 
             continue; 
 
         // use z scaling factor to calculate 3D point
-        double z = b / norm_disparity;
+        double z = fx_rect * baseline / disparity_px;
         if (z < 0 || z > 5)
             continue;
 
-        cv::Mat P_C = (cv::Mat_<double>(3, 1) << undistorted_left_pts[i].x * z, undistorted_left_pts[i].y * z, z); // 3D point in current left camera frame
+        double x = (undistorted_left_pts[i].x - cx_rect) * z / fx_rect;
+        double y = (undistorted_left_pts[i].y - cy_rect) * z / fy_rect;
+        cv::Mat P_C_rect = (cv::Mat_<double>(3,1) << x, y, z); // 3D point in rectified frame
+        cv::Mat P_C = R1.t() * P_C_rect; // 3D point in left camera frame
         cv::Mat P_W_mat = R_W_C * P_C + t_W_C; // 3D point in world frame
         cv::Point3d P_W(P_W_mat.at<double>(0), P_W_mat.at<double>(1), P_W_mat.at<double>(2));
 
@@ -272,19 +293,30 @@ void StereoTracker::getPose()
         {
             std::vector<cv::Point3f> object_points_inliers;
             std::vector<cv::Point2f> image_points_inliers;
+            vector<int> inlier_ids;
 
             for (int &inlier : inliers)
             {
                 int id = kept_ids[inlier];
-                Observation feature_observation; // only add feature observations if its considered a RANSAC inlier
-                feature_observation.frame_id = this->frame_id;
-                feature_observation.frame_location = image_points[inlier];
-
+                inlier_ids.push_back(id);
                 object_points_inliers.push_back(object_points[inlier]);
                 image_points_inliers.push_back(image_points[inlier]);
-
                 global_map[id].outlier_count = 0;
-                global_map[id].observations.push_back(feature_observation);
+            }
+
+            vector<Point2f> undistorted_left_inliers;
+            undistortPoints(image_points_inliers, undistorted_left_inliers, K_left, D_left, Mat(), Mat()); // Pass in undistorted points in camera frame not rectified frame
+            for (size_t a = 0; a < undistorted_left_inliers.size(); a++)
+            {
+                Observation feature_observation;
+                feature_observation.frame_id = this->frame_id;
+                feature_observation.frame_location = undistorted_left_inliers[a]; // store normalized coordinates
+
+                auto& obs_vector = global_map[inlier_ids[a]].observations;
+                if (obs_vector.size() >= MAX_OBSERVATIONS)
+                    obs_vector.erase(obs_vector.begin()); // use sliding window if landmark observations exceeds limit
+
+                obs_vector.push_back(feature_observation);
             }
         
             for (auto it = global_map.begin(); it != global_map.end();) // erase landmarks that are considered outliers for 3 or more consecutive frames
@@ -321,9 +353,9 @@ void StereoTracker::getPose()
             path.header.stamp = pose.header.stamp;
 
             // Match point cloud orientation in rviz
-            pose.pose.position.x = t_W_C.at<double>(2);
-            pose.pose.position.y = t_W_C.at<double>(0);
-            pose.pose.position.z = -t_W_C.at<double>(1);
+            pose.pose.position.x = t_W_C.at<double>(0);
+            pose.pose.position.y = t_W_C.at<double>(1);
+            pose.pose.position.z = t_W_C.at<double>(2);
 
             pose.pose.orientation.w = q_W_C.w();
             pose.pose.orientation.x = q_W_C.x();
@@ -357,21 +389,21 @@ void StereoTracker::outputPose(string filename)
         Eigen::Quaterniond q_W_C(pose.pose.orientation.w, pose.pose.orientation.x, pose.pose.orientation.y, pose.pose.orientation.z);
         Eigen::Matrix3d R_W_C = q_W_C.toRotationMatrix();
 
-        Eigen::Matrix3d R_C_B_eigen;
-        R_C_B_eigen <<
-            R_C_B.at<double>(0,0), R_C_B.at<double>(0,1), R_C_B.at<double>(0,2),
-            R_C_B.at<double>(1,0), R_C_B.at<double>(1,1), R_C_B.at<double>(1,2),
-            R_C_B.at<double>(2,0), R_C_B.at<double>(2,1), R_C_B.at<double>(2,2);
+        Eigen::Matrix3d R_C_B0_eigen;
+        R_C_B0_eigen <<
+            R_C_B0.at<double>(0,0), R_C_B0.at<double>(0,1), R_C_B0.at<double>(0,2),
+            R_C_B0.at<double>(1,0), R_C_B0.at<double>(1,1), R_C_B0.at<double>(1,2),
+            R_C_B0.at<double>(2,0), R_C_B0.at<double>(2,1), R_C_B0.at<double>(2,2);
 
-        Eigen::Vector3d t_C_B_eigen(
-            t_C_B.at<double>(0),
-            t_C_B.at<double>(1),
-            t_C_B.at<double>(2));
+        Eigen::Vector3d t_C_B0_eigen(
+            t_C_B0.at<double>(0),
+            t_C_B0.at<double>(1),
+            t_C_B0.at<double>(2));
 
         // Solves IMU body frame -> world transformation
         // Current pose of IMU body relative to world frame (starting pose of left camera)
-        Eigen::Matrix3d R_W_B = R_W_C * R_C_B_eigen;
-        Eigen::Vector3d p_W_B = R_W_C * t_C_B_eigen + p_W_C;
+        Eigen::Matrix3d R_W_B = R_W_C * R_C_B0_eigen;
+        Eigen::Vector3d p_W_B = R_W_C * t_C_B0_eigen + p_W_C;
 
         // World -> Vicon
         Eigen::Vector3d p_V_B = R_init * p_W_B + t_init;
@@ -476,4 +508,95 @@ double StereoTracker::reprojectionError(const vector<Point2f> curr_left_feature_
     }
     mean_abs_err = mean_abs_err / projected_points.size();
     return mean_abs_err;
+}
+
+void StereoTracker::optimizeLandmark()
+{
+    const int MAX_ITERATIONS = 5;
+
+    for (auto& [id, landmark] : global_map)
+    {
+        if (landmark.observations.size() < OBSERVATION_THRESH) 
+            continue;
+        
+        bool recent_observation = (this->frame_id - landmark.observations.back().frame_id) < 20;
+        if (!recent_observation)
+            continue;
+        
+        // TODO: Change to LM later with dynamic lambda based off reprojcetion error
+        double lambda = 1e-2; // dx = b / lambda, the larger lambda, the smaller the step size correction
+        for (int iter = 0; iter < MAX_ITERATIONS; ++iter)
+        {
+            double total_error = 0.0;
+            double max_error = 0.0;
+            int valid_obs = 0;
+
+            cv::Mat H = cv::Mat::zeros(3, 3, CV_64F);
+            cv::Mat b = cv::Mat::zeros(3, 1, CV_64F);
+
+            for (const auto& observation : landmark.observations)
+            {
+                Pose curr_camera_pose = camera_pose[observation.frame_id];
+                cv::Mat P_W = (cv::Mat_<double>(3, 1) << landmark.pos.x, landmark.pos.y, landmark.pos.z);
+                cv::Mat P_C = curr_camera_pose.rotation * P_W + curr_camera_pose.translation;
+
+                double xc = P_C.at<double>(0);
+                double yc = P_C.at<double>(1);
+                double zc = P_C.at<double>(2);
+
+                if (zc <= 1e-4) 
+                    continue; 
+                
+                double u_proj = xc / zc;
+                double v_proj = yc / zc;
+
+                cv::Mat J_inter = (cv::Mat_<double>(2, 3) << 
+                    1/zc,   0.0, -xc/(zc*zc),
+                      0.0, 1/zc, -yc/(zc*zc));
+
+                cv::Mat J = -1.0 * J_inter * curr_camera_pose.rotation;
+                
+                cv::Mat residual = (cv::Mat_<double>(2, 1) << 
+                    (observation.frame_location.x - u_proj),
+                    (observation.frame_location.y - v_proj));
+
+                double error = cv::norm(residual);
+                total_error += norm(error);
+                max_error = max(max_error, error);
+                valid_obs++;
+
+                H += J.t() * J;
+                b += J.t() * residual;
+            }
+
+            cv::Mat H_damped = H + lambda * cv::Mat::eye(3, 3, CV_64F);
+            cv::Mat dx;
+            double mean_error = valid_obs > 0 ? total_error / valid_obs : 0.0;
+            bool solved = cv::solve(H_damped, b, dx, cv::DECOMP_LU);
+            if (!solved)
+                break;
+
+            double dx_norm = norm(dx);
+            landmark.pos.x -= dx.at<double>(0);
+            landmark.pos.y -= dx.at<double>(1);
+            landmark.pos.z -= dx.at<double>(2);
+
+            optimization_log
+            << numb_keyframes << ","
+            << id << ","
+            << landmark.observations.size() << ","
+            << iter << ","
+            << mean_error << ","
+            << max_error << ","
+            << dx_norm << ","
+            << landmark.pos.x << ","
+            << landmark.pos.y << ","
+            << landmark.pos.z
+            << "\n";
+
+            double step_norm = cv::norm(dx);
+            if (step_norm < 1e-5) // landmark has converged, stop iterations
+                break; 
+        }
+    }
 }
