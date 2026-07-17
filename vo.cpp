@@ -109,6 +109,7 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path, ui
         this->avg_mae += reprojectionError(kept_left_pts, kept_ids);
         optimizeLandmark();
     }
+
     vector<cv::Point2f> filtered_left_pts;
     vector<int> filtered_ids;
 
@@ -299,7 +300,7 @@ void StereoTracker::getPose(uint64_t timestep)
         // solvePnPRansac solves transformation matrix from world to camera frame
         // No need to propogate T since you're comparing to global map object points in world frame
         // inliers represent indices of points that are considered reliable (3D points and 2D points reliably match)
-        bool success = cv::solvePnPRansac(object_points, image_points, K_left, D_left, this->rvec, this->tvec, false, 100, 10.0F, 0.99, inliers);
+        bool success = cv::solvePnPRansac(object_points, image_points, K_left, D_left, this->rvec, this->tvec, true, 100, 3.0F, 0.99, inliers);
 
         if (success) 
         {
@@ -308,7 +309,7 @@ void StereoTracker::getPose(uint64_t timestep)
             vector<int> inlier_ids;
             vector<bool> is_inlier(kept_ids.size(), false);
 
-            for (int &inlier : inliers)
+            for (int &inlier : inliers) // keep feature and object inliers to feed into pose refinement
             {
                 int id = kept_ids[inlier];
                 inlier_ids.push_back(id);
@@ -334,19 +335,19 @@ void StereoTracker::getPose(uint64_t timestep)
             {
                 Observation feature_observation;
                 feature_observation.frame_id = this->frame_id;
-                feature_observation.frame_location = undistorted_left_inliers[a]; // store normalized coordinates
+                feature_observation.frame_location = undistorted_left_inliers[a]; // store normalized coordinates that already used intrisic and distortion matrices
 
                 auto& landmark = global_map[inlier_ids[a]];
                 if (!landmark.observations.empty())
                 {
-                    double parallax = computeParallax(landmark.pos, landmark.observations.back(), feature_observation);
+                    double parallax = computeParallax(landmark.pos, landmark.observations.back(), feature_observation); // only add observations with large enough parallax
                     if (parallax < MIN_PARALLAX_APPEND_RAD)
                         continue;
                 }
 
                 auto& obs_vector = landmark.observations;
                 if (obs_vector.size() >= MAX_OBSERVATIONS)
-                    obs_vector.erase(obs_vector.begin()); // use sliding window if landmark observations exceeds limit
+                    obs_vector.erase(obs_vector.begin()); // use sliding window if landmark observations exceeds limit (delete oldest, add newest)
 
                 obs_vector.push_back(feature_observation);
             }
@@ -390,6 +391,16 @@ void StereoTracker::getPose(uint64_t timestep)
             pose.pose.position.y = t_W_C.at<double>(1);
             pose.pose.position.z = t_W_C.at<double>(2);
 
+            if (!path.poses.empty())
+            {
+                const auto& last_pos = path.poses.back().pose.position;
+                Eigen::Vector3d curr(pose.pose.position.x, pose.pose.position.y, pose.pose.position.z);
+                Eigen::Vector3d prev(last_pos.x, last_pos.y, last_pos.z);
+                double dist = (curr - prev).norm();
+                if (dist >= MAX_STEP_DIST)
+                    return; // Too large a translation between last and current translation vectors
+            }
+
             pose.pose.orientation.w = q_W_C.w();
             pose.pose.orientation.x = q_W_C.x();
             pose.pose.orientation.y = q_W_C.y();
@@ -413,6 +424,9 @@ void StereoTracker::outputPose(string filename)
     csv_file << std::fixed << std::setprecision(6);
 
     cout << "VO estimate size: " << this->path.poses.size() << endl;
+
+    Eigen::Quaterniond prev_q_room_V = Eigen::Quaterniond::Identity();
+    bool have_prev_q_room_V = false;
 
     for (const auto &pose : this->path.poses)
     {
@@ -440,7 +454,14 @@ void StereoTracker::outputPose(string filename)
         if (p_room_V.norm() > 1e3)
             continue;
 
-        csv_file << pose.header.stamp.sec + pose.header.stamp.nanosec * 1e-9 << ","
+        if (have_prev_q_room_V && q_room_V.dot(prev_q_room_V) < 0.0) // -q = q, flip to keep sign continuous across frames
+            q_room_V.coeffs() *= -1.0;
+        prev_q_room_V = q_room_V;
+        have_prev_q_room_V = true;
+        uint64_t timestamp_ns = static_cast<uint64_t>(pose.header.stamp.sec) * 1000000000ULL
+                            + static_cast<uint64_t>(pose.header.stamp.nanosec);
+
+        csv_file << timestamp_ns << ","
                 << p_room_V.x() << ","
                 << p_room_V.y() << ","
                 << p_room_V.z() << ","
@@ -476,7 +497,7 @@ double StereoTracker::reprojectionError(string left_img_path, const vector<Point
     }
 
     double mean_abs_err = 0;
-    cv::projectPoints(object_points, rvec, tvec, K_left, D_left, projected_points);
+    cv::projectPoints(object_points, rvec, tvec, K_left, D_left, projected_points); // need to undistort and use intrinsic since reading in raw image points
     for (size_t i = 0; i < projected_points.size(); i++)
     {
         cv::line(img_left, image_points[i], projected_points[i], cv::Scalar(255), 1);
@@ -518,7 +539,7 @@ double StereoTracker::reprojectionError(const vector<Point2f> curr_left_feature_
     }
 
     double mean_abs_err = 0;
-    cv::projectPoints(object_points, rvec, tvec, K_left, D_left, projected_points);
+    cv::projectPoints(object_points, rvec, tvec, K_left, D_left, projected_points); // undistort as well since you triangulated with undistorted points
     for (size_t i = 0; i < projected_points.size(); i++)
     {
         double error = norm(projected_points[i] - image_points[i]);
@@ -549,7 +570,7 @@ double StereoTracker::computeError(const cv::Point3d& pos, vector<Observation>& 
         double zc = P_C.at<double>(2);
         if (zc <= 1e-4) continue;
 
-        double u_proj = P_C.at<double>(0) / zc;
+        double u_proj = P_C.at<double>(0) / zc; // normalize xy by z depth for projected point since you stored normalized point in feature_observation.frame_location, no need for distortion or intrinsic matrices
         double v_proj = P_C.at<double>(1) / zc;
 
         cv::Mat residual = (cv::Mat_<double>(2, 1) <<
@@ -592,7 +613,7 @@ void StereoTracker::optimizeLandmark()
             continue;
         
         double parallax = computeParallax(landmark.pos, landmark.observations.front(), landmark.observations.back());
-        if (parallax < MIN_PARALLAX_REFINE_RAD)
+        if (parallax < MIN_PARALLAX_REFINE_RAD) // parallax between oldestt and newest observations isnt enough to justfiy optimizing
             continue;
         
         double current_error = computeError(landmark.pos, landmark.observations);
@@ -662,9 +683,9 @@ void StereoTracker::optimizeLandmark()
             }
 
             Point3d candidate_pos = landmark.pos;
-            candidate_pos.x += dx.at<double>(0);
-            candidate_pos.y += dx.at<double>(1);
-            candidate_pos.z += dx.at<double>(2);
+            candidate_pos.x -= dx.at<double>(0);
+            candidate_pos.y -= dx.at<double>(1);
+            candidate_pos.z -= dx.at<double>(2);
             double new_error = computeError(candidate_pos, landmark.observations);
 
             optimization_log
@@ -685,7 +706,7 @@ void StereoTracker::optimizeLandmark()
                 landmark.pos = candidate_pos;
                 current_error = new_error;
                 lambda *= 0.5;
-                if (cv::norm(dx) < 1e-5) // landmark has converged, stop iterations
+                if (cv::norm(dx) < 1e-3) // landmark has converged, stop iterations
                     break;
             }
             else

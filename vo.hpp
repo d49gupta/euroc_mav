@@ -20,9 +20,10 @@
 #define REPROJ_ERR 5
 #define FEATURE_THRESH 0.5
 #define OBSERVATION_THRESH 5
-#define MAX_OBSERVATIONS 15
+#define MAX_OBSERVATIONS 20
 #define MIN_PARALLAX_APPEND_RAD 0.0034906585 // 0.2 degs
 #define MIN_PARALLAX_REFINE_RAD 0.0174532925 // 1 degree
+#define MAX_STEP_DIST 1.1
 
 using namespace std;
 using namespace cv;
@@ -150,6 +151,7 @@ class StereoTracker : public rclcpp::Node
         // World->Camera T, used in solvePnPRansac
         cv::Mat rvec, tvec;
         std::ofstream optimization_log;
+        Eigen::Quaterniond prev_q_W_C = Eigen::Quaterniond::Identity();
 
     public:
         StereoTracker(string nodeName);
