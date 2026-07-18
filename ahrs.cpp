@@ -19,7 +19,11 @@ Eigen::Quaterniond BASE_AHRS::init_orient(size_t num_samples)
     
     this->gyro_bias = sum_gyro / static_cast<double>(num_samples);
     Eigen::Vector3d mean_accel = sum_accel / static_cast<double>(num_samples);
+    this->g_ref = -mean_accel;
+    Eigen::Vector3d target{0.0, 0.0, g_ref.norm()}; // Ideal gravity vector measured by accelerometer
+    R_align = Eigen::Quaterniond::FromTwoVectors(mean_accel, target);
 
+    // orientation of drone at t=0 relative to true vertical
     double roll = atan2(mean_accel.y(), mean_accel.z());
     double pitch = atan2(-mean_accel.x(), sqrt(mean_accel.y()*mean_accel.y() + mean_accel.z()*mean_accel.z()));
     double yaw = 0.0;
@@ -27,24 +31,31 @@ Eigen::Quaterniond BASE_AHRS::init_orient(size_t num_samples)
     Eigen::Vector3d init_euler(roll, pitch, yaw);
     Eigen::Quaterniond init_quat;
     eulers_to_quat(init_euler, init_quat);
-    // std::cout<<init_quat.w()<<" "<<init_quat.x()<<" "<<init_quat.y()<<" "<<init_quat.z()<<std::endl;
-
-    this->q_align = this->q_gt_0 * init_quat.conjugate();
-    // Eigen::Quaterniond q_init_align = this->q_align * init_quat;
-    // q_init_align.normalize();
-
     this->orient_estimate.push_back(init_quat);
-    // Eigen::Vector3d euler_curr = quat_to_eulers(q_curr);
-    // this->euler_estimate.push_back(euler_curr);
 
     return init_quat;
 }
 
-Eigen::Quaterniond BASE_AHRS::align_quat(Eigen::Quaterniond& q)
+void BASE_AHRS::estimate_position()
 {
-    Eigen::Quaterniond q_aligned = this->q_align * q;
-    q_aligned.normalize();
-    return q_aligned;
+    Eigen::Vector3d init_pos{0.0, 0.0, 0.0};
+    this->pos_estimate.push_back(init_pos);
+    this->vel_estimate.push_back(init_pos);
+    this->timestamp.push_back(this->imu_data[0].timestamp);
+
+    for (size_t i = 1; i < this->imu_data.size(); i++)
+    {
+        uint64_t t_now = this->imu_data[i].timestamp;
+        uint64_t t_last = this->imu_data[i-1].timestamp;
+        double dt = static_cast<double>(t_now - t_last) / 1e9;
+        this->timestamp.push_back(t_now);
+        Eigen::Vector3d accel_ref = this->orient_estimate[i] * this->imu_data[i].accel + g_ref; // account for gravity
+
+        Eigen::Vector3d curr_vel = vel_estimate.back() + accel_ref * dt;
+        Eigen::Vector3d curr_pos = pos_estimate.back() + vel_estimate.back() * dt + 0.5 * accel_ref * dt * dt; // Taylor series for position and velocity calculations
+        this->vel_estimate.push_back(curr_vel);
+        this->pos_estimate.push_back(curr_pos);
+    }
 }
 
 void BASE_AHRS::quat_error(const std::string& filename, const std::vector<Eigen::Quaterniond>& gt_trajectory) 
@@ -124,6 +135,40 @@ void BASE_AHRS::vec_error(const std::string& filename, const std::vector<Eigen::
     csv_file.close();
 }
 
+void BASE_AHRS::outputPose(const std::string& filename, const std::vector<uint64_t>& timestamp,
+                            const std::vector<Eigen::Vector3d>& pos_estimate, const std::vector<Eigen::Vector3d>& orient_estimate) 
+{
+    std::ofstream csv_file(filename);
+
+    if (!csv_file.is_open()) 
+    {
+        std::cerr << "Error: Could not open file " << filename << " for writing!" << std::endl;
+        return;
+    }
+
+    csv_file << "timestamp,pos_x,pos_y,pos_z,roll,pitch,yaw\n";
+    csv_file << std::fixed << std::setprecision(6);
+
+    size_t loop_size = std::min({timestamp.size(), pos_estimate.size(), orient_estimate.size()});
+
+    for (size_t i = 0; i < loop_size; ++i) 
+    {
+        Eigen::Vector3d pos = pos_estimate[i];
+        Eigen::Vector3d orient = orient_estimate[i];
+        uint64_t time = timestamp[i];
+
+        csv_file << time << ","
+                << pos.x() << ","
+                << pos.y() << ","
+                << pos.z() << ","
+                << orient.x() << ","
+                << orient.y() << ","
+                << orient.z() << "\n";
+    }
+
+    csv_file.close();
+}
+
 void BASE_AHRS::CHEBY_LP_FILT(IMUSample& data)
 {
     float clean_wx = filter_gyro_x.filter(data.gyro.x());
@@ -165,7 +210,7 @@ void DEAD_RECKONING_AHRS::ahrs_estimate()
         // this->euler_estimate.push_back(euler_curr);
         this->orient_estimate.push_back(q_curr);
     }
-    this->align_estimate();
+    
 
     return;
 }
@@ -199,7 +244,7 @@ void COMPLEMENTARY_AHRS::ahrs_estimate()
         // Eigen::Vector3d euler_curr = quat_to_eulers(q_curr);
         // this->euler_estimate.push_back(euler_curr);
     }
-    this->align_estimate();
+    
     return;
 }
 
@@ -211,6 +256,7 @@ void COMPLEMENTARY_AHRS::COMPLEMENTARY_FILT(IMUSample& data, Eigen::Quaterniond&
 
     Eigen::Quaterniond q_accel = Eigen::Quaterniond::Identity();
     Eigen::Vector3d a_norm = data.accel.normalized();
+    
     double roll_accel  = atan2(data.accel.y(), data.accel.z());
     double pitch_accel = atan2(-data.accel.x(), sqrt(data.accel.y()*data.accel.y() + data.accel.z()*data.accel.z()));
     double yaw_gyro = yaw_from_quat(q); // take yaw from gyro's since accelerometers can't measure
@@ -254,7 +300,7 @@ void MAHONY_AHRS::ahrs_estimate()
         // this->euler_estimate.push_back(euler_curr);
         this->orient_estimate.push_back(q_curr);
     }
-    this->align_estimate();
+    
 }
 
 void MAHONY_AHRS::MAHONY_FILT(IMUSample& data, double dt)
@@ -310,7 +356,7 @@ void MADGWICK_AHRS::ahrs_estimate()
         // this->euler_estimate.push_back(euler_curr);
         this->orient_estimate.push_back(q_gyro);
     }
-    this->align_estimate();
+    
 }
 
 void MADGWICK_AHRS::MADGWICK_FILT(IMUSample& data, Eigen::Quaterniond& q_gyro, double step_size)
@@ -394,7 +440,6 @@ void EKF_AHRS::ahrs_estimate()
         this->predict(imu_data[i], dt);
         this->correct(imu_data[i]);
     }
-    this->align_estimate();
 }
 
 void EKF_AHRS::predict(IMUSample& data, double dt)
@@ -531,10 +576,15 @@ void EKF_AHRS::init_params()
 
 void BASE_AHRS::align_estimate()
 {
+    Eigen::Quaterniond q_init = this->q_gt0 * this->q_V_B; // body -> vicon * vicon -> room
+    Eigen::Vector3d    t_init = this->q_gt0 * this->t_V_B_eigen + this->t_gt0;
+
     for (size_t i = 0; i < this->orient_estimate.size(); i++)
     {
-        this->orient_estimate[i] = this->q_align * this->orient_estimate[i];
+        this->orient_estimate[i] = q_init * this->orient_estimate[i];
         Eigen::Vector3d euler_curr = quat_to_eulers(this->orient_estimate[i]);
         this->euler_estimate.push_back(euler_curr);
+
+        this->pos_estimate[i] = q_init * this->pos_estimate[i] + t_init;
     }
 }

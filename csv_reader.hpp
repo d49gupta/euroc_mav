@@ -52,6 +52,8 @@ class GTReader : public csvReader
         void readCSV() override;
         void printRow() override;
 
+        vector<uint64_t> gt_timestamp;
+        vector<Eigen::Vector3d> gt_pos_data;
         vector<Eigen::Quaterniond> gt_orient_data;
         vector<Eigen::Vector3d> gt_euler_data;
         vector<Eigen::Vector3d> gt_gyro_bias;

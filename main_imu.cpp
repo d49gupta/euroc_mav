@@ -4,7 +4,7 @@
 int main() 
 {
     IMUReader imu_reader("src/vicon_room1/vicon_room1/V1_01_easy/V1_01_easy/mav0/imu0/data.csv");
-    GTReader gt_reader("src/vicon_room1/vicon_room1/V1_01_easy/V1_01_easy/mav0/state_groundtruth_estimate0/data.csv");
+    GTReader gt_reader("src/vicon_room1/vicon_room1/V1_01_easy/V1_01_easy/mav0/vicon0/data.csv");
 
     imu_reader.readCSV();
     cout<<"Data size: "<<imu_reader.data.size()<<endl;
@@ -20,10 +20,12 @@ int main()
     // from inherited classes. This means assuming methods are in abstarct class, it can call method from
     // two different inherited classes without changing type. Note that if ahrs_estimate calls a custom non virtual 
     // class in one inherited class, using the base type to call this ahrs_estimate will still work
-    std::unique_ptr<EKF_AHRS> iter1 = std::make_unique<EKF_AHRS>(imu_reader.data);
+    std::unique_ptr<MADGWICK_AHRS> iter1 = std::make_unique<MADGWICK_AHRS>(imu_reader.data);
     iter1->ahrs_estimate();
-    iter1->quat_error("src/build/dead_reckoning.csv", gt_reader.gt_orient_data);
-    iter1->vec_error("src/build/euler.csv", iter1->euler_estimate, gt_reader.gt_euler_data);
-    iter1->vec_error("src/build/gyro_bias.csv", iter1->gyro_bias_estimate, gt_reader.gt_gyro_bias);
+    iter1->estimate_position();
+    iter1->align_estimate();
+
+    iter1->outputPose("src/build/imu_estimate.csv", iter1->timestamp, iter1->pos_estimate, iter1->euler_estimate);
+    iter1->outputPose("src/build/vicon_estimate.csv", gt_reader.gt_timestamp, gt_reader.gt_pos_data, gt_reader.gt_euler_data);
     return 0;
 }
