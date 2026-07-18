@@ -58,6 +58,34 @@ void BASE_AHRS::estimate_position()
     }
 }
 
+void BASE_AHRS::quat_output(const std::string& filename, const std::vector<uint64_t>& timestamp, const std::vector<Eigen::Quaterniond>& gt_trajectory) 
+{
+    std::ofstream csv_file(filename);
+
+    if (!csv_file.is_open()) 
+    {
+        std::cerr << "Error: Could not open file " << filename << " for writing!" << std::endl;
+        return;
+    }
+
+    csv_file << "timestamp,est_qw,est_qx,est_qy,est_qz\n";
+    csv_file << std::fixed << std::setprecision(6);
+
+    size_t loop_size = std::min(timestamp.size(), gt_trajectory.size());
+
+    for (size_t i = 0; i < loop_size; ++i) 
+    {
+        const uint64_t time = timestamp[i];
+        const auto& q_est = gt_trajectory[i];
+
+        csv_file << time << ","
+                << q_est.w() << ","
+                << q_est.x() << ","
+                << q_est.y() << ","
+                << q_est.z() << "\n";
+    }
+}
+
 void BASE_AHRS::quat_error(const std::string& filename, const std::vector<Eigen::Quaterniond>& gt_trajectory) 
 {
     std::ofstream csv_file(filename);

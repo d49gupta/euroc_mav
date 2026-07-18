@@ -27,5 +27,6 @@ int main()
 
     iter1->outputPose("src/build/imu_estimate.csv", iter1->timestamp, iter1->pos_estimate, iter1->euler_estimate);
     iter1->outputPose("src/build/vicon_estimate.csv", gt_reader.gt_timestamp, gt_reader.gt_pos_data, gt_reader.gt_euler_data);
+    iter1->quat_output("src/build/quat_estimate.csv", iter1->timestamp, iter1->orient_estimate);
     return 0;
 }

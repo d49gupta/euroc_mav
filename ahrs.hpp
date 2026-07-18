@@ -61,6 +61,7 @@ class BASE_AHRS
                             const std::vector<Eigen::Vector3d>& pos_estimate, const std::vector<Eigen::Vector3d>& orient_estimate);
         double get_shortest_angle_error(double estimate, double ground_truth);
         void quat_error(const std::string& filename, const std::vector<Eigen::Quaterniond>& gt_trajectory);
+        void quat_output(const std::string& filename, const std::vector<uint64_t>& timestamp, const std::vector<Eigen::Quaterniond>& gt_trajectory); 
         Eigen::Quaterniond init_orient(size_t num_samples = 200);
         void estimate_position();
 
