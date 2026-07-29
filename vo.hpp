@@ -58,7 +58,7 @@ struct Pose
 
 class StereoTracker : public rclcpp::Node
 {
-    private:
+    protected:
         cv::Mat prev_left_img;
         vector<Point2f> prev_left_feature_pts;
         vector<int> prev_feature_ids;
@@ -160,7 +160,7 @@ class StereoTracker : public rclcpp::Node
         void triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Point2f>& feature_pts, const int numb_features, const cv::Mat& mask, 
                         vector<cv::Point2f>& added_left_pts, vector<int>& added_ids);
         void publishMap();
-        void getPose(uint64_t timestep);
+        virtual void getPose(uint64_t timestep) = 0;
         void outputPose(string filename);
         double reprojectionError(string left_img_path, const vector<Point2f> curr_left_feature_pts, const vector<int> curr_feature_ids);
         double reprojectionError(const vector<Point2f> curr_left_feature_pts, const vector<int> curr_feature_ids);
@@ -175,6 +175,13 @@ class StereoTracker : public rclcpp::Node
         int frame_id = 0;
         int numb_keyframes = 0;
         double avg_mae = 0;
+};
+
+class VisualOdometry : public StereoTracker
+{
+    public:
+        VisualOdometry(const string nodeName) : StereoTracker(nodeName) {}
+        void getPose(uint64_t timestep) override;
 };
 
 #endif

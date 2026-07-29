@@ -12,7 +12,6 @@ class BASE_AHRS
 {
     protected:
         std::vector<IMUSample> imu_data;
-        Eigen::Quaterniond q_gt_0{0.060514, -0.828459, -0.058956, -0.553641}; // use {} for init in header
         Chebyshev2Filter filter_gyro_x;
         Chebyshev2Filter filter_gyro_y;
         Chebyshev2Filter filter_gyro_z;
@@ -77,7 +76,6 @@ class BASE_AHRS
         void align_estimate();
         // actual gravity vector at t=0 since IMU measures normal reaction
         Eigen::Vector3d g_ref; // negative of average accel data, when drone is upright stationary (|g_ref| = 9.81), gravity vector relative to true vertical
-        Eigen::Quaterniond R_align; // rotation between true vertical and intial gravity vector
 };
 
 class DEAD_RECKONING_AHRS : public BASE_AHRS

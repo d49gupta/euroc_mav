@@ -34,6 +34,17 @@ add_executable(cam
   main_cam.cpp
 )
 
+add_executable(vio
+  csv_reader.cpp
+  math_utils.cpp
+  ahrs.cpp
+  image_reader.cpp
+  vo.cpp
+  vio.cpp
+  main_vio.cpp
+)
+
+
 target_link_libraries(imu
   Eigen3::Eigen
 )
@@ -43,6 +54,10 @@ target_link_libraries(cam
   Eigen3::Eigen
 )
 
+target_link_libraries(vio
+  ${OpenCV_LIBS}
+  Eigen3::Eigen
+)
 
 target_include_directories(imu PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
@@ -56,13 +71,20 @@ target_include_directories(cam PUBLIC
   ${OpenCV_INCLUDE_DIRS}
 )
 
+target_include_directories(vio PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${Eigen3_INCLUDE_DIRS}
+  ${OpenCV_INCLUDE_DIRS}
+)
+
 ament_target_dependencies(imu rclcpp std_msgs sensor_msgs nav_msgs)
 ament_target_dependencies(cam rclcpp std_msgs sensor_msgs nav_msgs)
-
+ament_target_dependencies(vio rclcpp std_msgs sensor_msgs nav_msgs)
 
 install(TARGETS
   imu
   cam
+  vio
   DESTINATION lib/${PROJECT_NAME}
 )
 

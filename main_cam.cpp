@@ -9,7 +9,7 @@ int main(int argc, char **argv)
     
     cout<<"First timestamp: "<<reader->frame_cam_timestamp[0][0]<<endl;
 
-    auto stereo_tracker = std::make_shared<StereoTracker>("stereo_tracker");
+    auto stereo_tracker = std::make_shared<VisualOdometry>("stereo_tracker");
     for (size_t i = 0; i < reader->frame_cam_names.size() && rclcpp::ok(); i++)
     {
         string left_path = reader->frame_cam_names[i][0];

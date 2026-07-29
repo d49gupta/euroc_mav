@@ -107,7 +107,6 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path, ui
     {
         this->numb_keyframes++;
         this->avg_mae += reprojectionError(kept_left_pts, kept_ids);
-        optimizeLandmark();
     }
 
     vector<cv::Point2f> filtered_left_pts;
@@ -276,7 +275,7 @@ void StereoTracker::publishMap()
     this->point_cloud_pub->publish(*pc2_msg);
 }
 
-void StereoTracker::getPose(uint64_t timestep)
+void VisualOdometry::getPose(uint64_t timestep)
 {
     std::vector<cv::Point3f> object_points; // 3D points in global map
     std::vector<cv::Point2f> image_points;  // 2D pixel locations
@@ -368,6 +367,7 @@ void StereoTracker::getPose(uint64_t timestep)
             inv_cam_pose.translation = this->tvec.clone();
             inv_cam_pose.rotation = R_C_W.clone();
             camera_pose[this->frame_id] = inv_cam_pose;
+            optimizeLandmark();
 
             // Invert to solve left camera -> world transformation
             // Current pose of left camera relative to world frame (starting pose of left camera)

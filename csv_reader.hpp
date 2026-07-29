@@ -16,7 +16,7 @@ using namespace std;
 
 struct IMUSample
 {
-    double timestamp;
+    uint64_t timestamp;
     Eigen::Vector3d accel;
     Eigen::Vector3d gyro;
 };
