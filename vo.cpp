@@ -275,11 +275,14 @@ void StereoTracker::publishMap()
     this->point_cloud_pub->publish(*pc2_msg);
 }
 
-void VisualOdometry::getPose(uint64_t timestep)
+void StereoTracker::getPose(uint64_t timestep)
 {
     std::vector<cv::Point3f> object_points; // 3D points in global map
     std::vector<cv::Point2f> image_points;  // 2D pixel locations
     std::vector<int> kept_ids;
+
+    this->last_inlier_ids.clear();
+    this->last_inlier_pts.clear();
 
     for (size_t i = 0; i < current_matches.size(); i++)
     {
@@ -317,6 +320,9 @@ void VisualOdometry::getPose(uint64_t timestep)
                 image_points_inliers.push_back(image_points[inlier]);
                 global_map[id].outlier_count = 0;
             }
+
+            this->last_inlier_ids = inlier_ids;
+            this->last_inlier_pts = image_points_inliers;
 
             for (size_t i = 0; i < kept_ids.size(); i++) // landmarks RANSAC saw but rejected as outliers this frame
             {

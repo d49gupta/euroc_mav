@@ -3,7 +3,7 @@
 #include "image_reader.hpp"
 #include "filters.hpp"
 
-#define IMU_CALIB_SIZE 10.0
+#define IMU_CALIB_SIZE 200.0
 // Initial filtered IMU data with 2nd order Chebyshev LP filter
 Chebyshev2Filter filter_gyro_x;
 Chebyshev2Filter filter_gyro_y;
@@ -40,10 +40,14 @@ int main(int argc, char **argv)
     image_reader->datasetLoader();
 
     if (imu_reader.data.empty() || image_reader->frame_cam_names.empty())
+    {
         std::cerr << "No data found." << std::endl;
+        return 0;
+    }
 
     int camera_frame = 0;
     auto estimator = std::make_shared<VisualInertialOdometry>("stereo_tracker");
+    estimator->init_params();
 
     // initial feature detection and map, no state estimate available
     estimator->processFrame(image_reader->frame_cam_names[camera_frame][0], image_reader->frame_cam_names[camera_frame][1], image_reader->frame_cam_timestamp[camera_frame][0]);
@@ -59,27 +63,41 @@ int main(int argc, char **argv)
     }
 
     Eigen::Vector3d init_gyro_bias = sum_gyro / IMU_CALIB_SIZE;
-    estimator->g_ref = sum_accel / IMU_CALIB_SIZE;
+    estimator->g_ref = -sum_accel / IMU_CALIB_SIZE;
 
+    // Initial state estimate through IMU calibration
     stateEstimate init_state;
-    init_state.timestamp = imu_reader.data[IMU_CALIB_SIZE].timestamp;
+    init_state.timestamp = imu_reader.data[IMU_CALIB_SIZE-1].timestamp;
     init_state.gyro_bias = init_gyro_bias;
     estimator->state_estimate.push_back(init_state);
+    estimator->last_estimate = init_state;
 
     // MAIN LOOP
-    for (size_t index = IMU_CALIB_SIZE; index < imu_reader.data.size(); index++)
+    for (size_t index = IMU_CALIB_SIZE; index < imu_reader.data.size() && rclcpp::ok(); index++)
+    // for (size_t index = IMU_CALIB_SIZE; index < 1000 && rclcpp::ok(); index++)
     {
-        if (image_reader->frame_cam_timestamp[camera_frame][0] >= imu_reader.data[index].timestamp)
-        {
-            // ESKF Correction
-            estimator->processFrame(image_reader->frame_cam_names[camera_frame][0], image_reader->frame_cam_names[camera_frame][1], image_reader->frame_cam_timestamp[camera_frame][0]);
-            camera_frame++;
-        }
-
+        
         CHEBY_LP_FILT(imu_reader.data[index]);
         uint64_t t_now = imu_reader.data[index].timestamp;
         uint64_t t_last = imu_reader.data[index-1].timestamp;
-        double dt = static_cast<double>(t_now - t_last) / 1e9;
-        estimator->preintegrate(imu_reader.data[index], dt);
-    }
+        double dt = static_cast<double>(t_now - t_last) / 1e9;        
+        estimator->update_covariance(imu_reader.data[index], dt);
+        estimator->predict(imu_reader.data[index], dt);
+        estimator->last_estimate.timestamp = t_now;
+
+        if (static_cast<size_t>(camera_frame) < image_reader->frame_cam_timestamp.size() && imu_reader.data[index].timestamp >= image_reader->frame_cam_timestamp[camera_frame][0])        
+        {
+                uint64_t t_cam = image_reader->frame_cam_timestamp[camera_frame][0];
+                estimator->processFrame(image_reader->frame_cam_names[camera_frame][0], image_reader->frame_cam_names[camera_frame][1], t_cam);
+                estimator->update(t_cam);
+                cout<<"Frame "<<camera_frame<<", Estimate size: "<<estimator->state_estimate.size()<<endl;
+                camera_frame++;
+            }
+            estimator->state_estimate.push_back(estimator->last_estimate);
+            rclcpp::spin_some(estimator);
+        }
+
+    estimator->outputState("src/build/vio_estimate.csv");
+    rclcpp::shutdown();
+    return 0;
 }

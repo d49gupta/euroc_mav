@@ -21,5 +21,7 @@ void SLERP_v4(Eigen::Quaterniond& a, const Eigen::Quaterniond& b, float gain);
 double yaw_from_quat(const Eigen::Quaterniond& q);
 void SLERP_v3(Eigen::Vector3d& a, const Eigen::Vector3d& b, double gain);
 Eigen::Vector3d quat_to_eulers(const Eigen::Quaterniond q);
+Eigen::Matrix3d VectoSkew(Eigen::Vector3d& vec);
+Eigen::Matrix3d vectoR(Eigen::Vector3d& rvec);
 
 #endif
