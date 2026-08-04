@@ -118,3 +118,32 @@ Eigen::Vector3d quat_to_eulers(const Eigen::Quaterniond q_curr)
     Eigen::Vector3d euler(roll, pitch, yaw);
     return euler;
 }
+
+Eigen::Matrix3d VectoSkew(Eigen::Vector3d& vec)
+{
+    Eigen::Matrix3d skew;
+    skew.setZero();
+
+    skew(0, 1) = -vec.z();
+    skew(0, 2) = vec.y();
+    skew(1, 0) = vec.z();
+    skew(1, 2) = -vec.x();
+    skew(2, 0) = -vec.y();
+    skew(2, 1) = vec.x();
+    
+    return skew;
+}
+
+Eigen::Matrix3d vectoR(Eigen::Vector3d& rvec)
+{
+    double angle = rvec.norm();
+
+    Eigen::Matrix3d mat;
+    if (angle < 1e-12) {
+        mat = Eigen::Matrix3d::Identity() + VectoSkew(rvec); // approximation
+    } 
+    else {
+        mat = Eigen::AngleAxisd(angle, rvec / angle).toRotationMatrix();
+    }
+    return mat;
+}

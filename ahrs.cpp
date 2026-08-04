@@ -20,8 +20,6 @@ Eigen::Quaterniond BASE_AHRS::init_orient(size_t num_samples)
     this->gyro_bias = sum_gyro / static_cast<double>(num_samples);
     Eigen::Vector3d mean_accel = sum_accel / static_cast<double>(num_samples);
     this->g_ref = -mean_accel;
-    Eigen::Vector3d target{0.0, 0.0, g_ref.norm()}; // Ideal gravity vector measured by accelerometer
-    R_align = Eigen::Quaterniond::FromTwoVectors(mean_accel, target);
 
     // orientation of drone at t=0 relative to true vertical
     double roll = atan2(mean_accel.y(), mean_accel.z());
@@ -410,8 +408,8 @@ void MADGWICK_AHRS::MADGWICK_FILT(IMUSample& data, Eigen::Quaterniond& q_gyro, d
 
     Eigen::Quaterniond q_prev = this->orient_estimate.back();
     Eigen::Vector3d v_world(0.0, 0.0, 1.0);
-    Eigen::Vector3d v_pred = q_prev.conjugate() * v_world; // at t=1 q_prev is aleady aligned with vicon world frame into body frame
-    // so taking residual of v_world in body frame matches teh same frame as the accel vector which is in body frame
+    Eigen::Vector3d v_pred = q_prev.conjugate() * v_world; 
+    // taking residual of v_world in body frame matches teh same frame as the accel vector which is in body frame
     Eigen::Vector3d accel_norm = data.accel.normalized();
     Eigen::Vector3d residual = v_pred - accel_norm;
     // Since for small angles sin theta = theta, if you pass in cross product error like in mahony instead of residual

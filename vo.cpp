@@ -107,7 +107,6 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path, ui
     {
         this->numb_keyframes++;
         this->avg_mae += reprojectionError(kept_left_pts, kept_ids);
-        optimizeLandmark();
     }
 
     vector<cv::Point2f> filtered_left_pts;
@@ -282,6 +281,9 @@ void StereoTracker::getPose(uint64_t timestep)
     std::vector<cv::Point2f> image_points;  // 2D pixel locations
     std::vector<int> kept_ids;
 
+    this->last_inlier_ids.clear();
+    this->last_inlier_pts.clear();
+
     for (size_t i = 0; i < current_matches.size(); i++)
     {
         int id = current_matches[i].id;
@@ -318,6 +320,9 @@ void StereoTracker::getPose(uint64_t timestep)
                 image_points_inliers.push_back(image_points[inlier]);
                 global_map[id].outlier_count = 0;
             }
+
+            this->last_inlier_ids = inlier_ids;
+            this->last_inlier_pts = image_points_inliers;
 
             for (size_t i = 0; i < kept_ids.size(); i++) // landmarks RANSAC saw but rejected as outliers this frame
             {
@@ -368,6 +373,7 @@ void StereoTracker::getPose(uint64_t timestep)
             inv_cam_pose.translation = this->tvec.clone();
             inv_cam_pose.rotation = R_C_W.clone();
             camera_pose[this->frame_id] = inv_cam_pose;
+            optimizeLandmark();
 
             // Invert to solve left camera -> world transformation
             // Current pose of left camera relative to world frame (starting pose of left camera)

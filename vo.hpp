@@ -23,7 +23,7 @@
 #define MAX_OBSERVATIONS 20
 #define MIN_PARALLAX_APPEND_RAD 0.0034906585 // 0.2 degs
 #define MIN_PARALLAX_REFINE_RAD 0.0174532925 // 1 degree
-#define MAX_STEP_DIST 1.1
+#define MAX_STEP_DIST 1.25
 
 using namespace std;
 using namespace cv;
@@ -58,13 +58,16 @@ struct Pose
 
 class StereoTracker : public rclcpp::Node
 {
-    private:
+    protected:
         cv::Mat prev_left_img;
         vector<Point2f> prev_left_feature_pts;
         vector<int> prev_feature_ids;
         int next_id = 0;
         vector<Feature> current_matches;
         unordered_map<int, Landmark> global_map;
+
+        vector<int> last_inlier_ids;
+        vector<Point2f> last_inlier_pts;
 
         const double b = 0.1101; // baseline in meters
         const int max_features = 150;
@@ -92,6 +95,12 @@ class StereoTracker : public rclcpp::Node
                                                     0.999557249008,   0.0149672133247,  0.025715529948,
                                                     -0.0257744366974,  0.00375618835797, 0.999660727178);
         cv::Mat t_B_C0 = (cv::Mat_<double>(3, 1) << -0.0216401454975, -0.064676986768, 0.00981073058949);
+
+        const Eigen::Matrix3d R_B_C0_eigen = (Eigen::Matrix3d() <<
+            0.0148655429818,  -0.999880929698,   0.00414029679422,
+            0.999557249008,    0.0149672133247,  0.025715529948,
+            -0.0257744366974,  0.00375618835797, 0.999660727178).finished();
+        const Eigen::Vector3d t_B_C0_eigen{-0.0216401454975, -0.064676986768, 0.00981073058949};
 
         // Extrinsic matrix from right camera to IMU body frame
         cv::Mat R_B_C1 = (cv::Mat_<double>(3, 3) << 0.0125552670891, -0.999755099723,  0.0182237714554,
