@@ -177,13 +177,10 @@ void VisualInertialOdometry::outputState(string filename)
         Eigen::Vector3d p_W_B = state.pos_estimate;
         Eigen::Matrix3d R_W_B = state.orient_estimate.toRotationMatrix();
 
-        // Vicon marker pose in world frame: body pose + marker's rigid mounting offset
-        Eigen::Matrix3d R_W_V = R_W_B * R_B_V;
-        Eigen::Vector3d p_W_V = R_W_B * t_B_V + p_W_B;
-
         // Align into Vicon room frame via the t=0 ground-truth anchor
-        Eigen::Matrix3d R_room_V = R_init * R_W_V;
-        Eigen::Vector3d p_room_V = R_init * p_W_V + t_init;
+        Eigen::Matrix3d R_align = q_gt0.toRotationMatrix();
+        Eigen::Matrix3d R_room_V = R_align * R_W_B;
+        Eigen::Vector3d p_room_V = R_align * p_W_B + t_gt_0;
         Eigen::Quaterniond q_room_V(R_room_V);
 
         if (p_room_V.norm() > 1e3)

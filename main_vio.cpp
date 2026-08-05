@@ -57,32 +57,33 @@ int main(int argc, char **argv)
     Eigen::Vector3d sum_accel = Eigen::Vector3d::Zero();
     for (int a = 0; a < IMU_CALIB_SIZE; a++)
     {
-        CHEBY_LP_FILT(imu_reader.data[a]); // Filter IMU data in place (pass by reference)
+        // CHEBY_LP_FILT(imu_reader.data[a]); // Filter IMU data in place (pass by reference)
         sum_gyro += imu_reader.data[a].gyro;
         sum_accel += imu_reader.data[a].accel;
     }
 
-    Eigen::Vector3d init_gyro_bias = sum_gyro / IMU_CALIB_SIZE;
-    estimator->g_ref = -sum_accel / IMU_CALIB_SIZE;
-
     // Initial state estimate through IMU calibration
     stateEstimate init_state;
     init_state.timestamp = imu_reader.data[IMU_CALIB_SIZE-1].timestamp;
+    Eigen::Vector3d init_gyro_bias = sum_gyro / IMU_CALIB_SIZE;
     init_state.gyro_bias = init_gyro_bias;
+    Eigen::Vector3d init_accel_bias(-0.012492, 0.547666, 0.069073); // use initial accel bias from ground truth state estimate for better filtering
+    init_state.accel_bias = init_accel_bias;
     estimator->state_estimate.push_back(init_state);
     estimator->last_estimate = init_state;
+    estimator->g_ref = -sum_accel / IMU_CALIB_SIZE + init_accel_bias;
 
     // MAIN LOOP
     for (size_t index = IMU_CALIB_SIZE; index < imu_reader.data.size() && rclcpp::ok(); index++)
     // for (size_t index = IMU_CALIB_SIZE; index < 1000 && rclcpp::ok(); index++)
     {
         
-        CHEBY_LP_FILT(imu_reader.data[index]);
+        // CHEBY_LP_FILT(imu_reader.data[index]);
         uint64_t t_now = imu_reader.data[index].timestamp;
         uint64_t t_last = imu_reader.data[index-1].timestamp;
         double dt = static_cast<double>(t_now - t_last) / 1e9;        
-        estimator->update_covariance(imu_reader.data[index], dt);
         estimator->predict(imu_reader.data[index], dt);
+        estimator->update_covariance(imu_reader.data[index], dt);
         estimator->last_estimate.timestamp = t_now;
 
         if (static_cast<size_t>(camera_frame) < image_reader->frame_cam_timestamp.size() && imu_reader.data[index].timestamp >= image_reader->frame_cam_timestamp[camera_frame][0])        

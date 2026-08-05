@@ -150,8 +150,12 @@ class StereoTracker : public rclcpp::Node
 
         // Ground truth vicon marker pose at t=0 (vicon0/data.csv, timestamp 1403715273265220000)
         // Maps vicon marker -> room (ground truth)
-        Eigen::Quaterniond q_gt0{0.993271232, -0.008876672, 0.022388759, 0.113279336};
-        Eigen::Vector3d t_gt0{0.786659422, 2.176692611, 1.061934815};
+        Eigen::Quaterniond q_vicon0{0.993271232, -0.008876672, 0.022388759, 0.113279336};
+        Eigen::Vector3d t_vicon0{0.786659422, 2.176692611, 1.061934815};
+
+        // Ground truth state estimate at t=0
+        Eigen::Quaterniond q_gt0{0.060514, -0.828459, -0.058956, -0.553641};
+        Eigen::Vector3d t_gt_0{0.878612, 2.14247, 0.947262};
 
         // World(VO) -> Vicon room-frame alignment, derived in the constructor from q_gt0/t_gt0
         Eigen::Matrix3d R_init;

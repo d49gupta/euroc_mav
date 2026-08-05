@@ -21,6 +21,7 @@ class VisualInertialOdometry : public StereoTracker
 {
     public:
         VisualInertialOdometry(const string nodeName) : StereoTracker(nodeName) {}
+
         void predict(IMUSample& data, double dt); // IMU preintegration
         void update(uint64_t timestep); // replace with VIO EKF
         void outputState(string filename); // properly transform all states

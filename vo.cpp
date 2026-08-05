@@ -33,9 +33,9 @@ StereoTracker::StereoTracker(string nodeName) : Node(nodeName)
     Eigen::Vector3d t_worldVO_marker0 = R_C_B0_eigen * t_B_V + t_C_B0_eigen;
 
     // Maps world -> room by chaining (world->marker and marker->room)
-    Eigen::Matrix3d R_gt0 = q_gt0.toRotationMatrix();
+    Eigen::Matrix3d R_gt0 = q_vicon0.toRotationMatrix();
     this->R_init = R_gt0 * R_worldVO_marker0.transpose();
-    this->t_init = t_gt0 - R_init * t_worldVO_marker0;
+    this->t_init = t_vicon0 - R_init * t_worldVO_marker0;
 }
 
 void StereoTracker::processFrame(string left_img_path, string right_img_path, uint64_t timestep)
@@ -265,9 +265,9 @@ void StereoTracker::publishMap()
     for (const auto& [id, pt] : global_map) // change to iterate from a to next_id then get the 3D pos
     {
         // match to rviz frame for pointcloud visualization
-        *iter_x = static_cast<float>(pt.pos.z);
-        *iter_y = static_cast<float>(pt.pos.x);
-        *iter_z = static_cast<float>(-pt.pos.y);
+        *iter_x = static_cast<float>(pt.pos.x);
+        *iter_y = static_cast<float>(pt.pos.y);
+        *iter_z = static_cast<float>(pt.pos.z);
 
         ++iter_x; ++iter_y; ++iter_z;
     }
