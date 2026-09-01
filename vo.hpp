@@ -166,6 +166,8 @@ class StereoTracker : public rclcpp::Node
         std::ofstream optimization_log;
         Eigen::Quaterniond prev_q_W_C = Eigen::Quaterniond::Identity();
 
+        cv::Ptr<cv::ORB> orb = cv::ORB::create();
+
     public:
         StereoTracker(string nodeName);
         void processFrame(string left_img_path, string right_img_path, uint64_t timestep);
@@ -188,6 +190,7 @@ class StereoTracker : public rclcpp::Node
         int frame_id = 0;
         int numb_keyframes = 0;
         double avg_mae = 0;
+        bool keyframe;
 };
 
 #endif

@@ -15,6 +15,8 @@ add_compile_options(-Wno-class-memaccess)
 
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(DBoW3 REQUIRED)
+find_package(Ceres REQUIRED)
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -44,7 +46,6 @@ add_executable(vio
   main_vio.cpp
 )
 
-
 target_link_libraries(imu
   Eigen3::Eigen
 )
@@ -52,11 +53,15 @@ target_link_libraries(imu
 target_link_libraries(cam
   ${OpenCV_LIBS}
   Eigen3::Eigen
+  ${DBoW3_LIBS}
+  ${CERES_LIBRARIES}
 )
 
 target_link_libraries(vio
   ${OpenCV_LIBS}
   Eigen3::Eigen
+  ${DBoW3_LIBS}
+  ${CERES_LIBRARIES}
 )
 
 target_include_directories(imu PUBLIC
@@ -75,6 +80,8 @@ target_include_directories(vio PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${Eigen3_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
+  ${DBoW3_INCLUDE_DIRS}
+  ${CERES_INCLUDE_DIRS}
 )
 
 ament_target_dependencies(imu rclcpp std_msgs sensor_msgs nav_msgs)

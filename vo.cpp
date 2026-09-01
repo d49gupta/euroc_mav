@@ -45,7 +45,7 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path, ui
     cv::Mat right_img = cv::imread(right_img_path, IMREAD_GRAYSCALE);
     vector<cv::Point2f> kept_left_pts;
     vector<int> kept_ids;
-    bool keyframe = false;
+    this->keyframe = false;
 
     if (left_img.empty() || right_img.empty())
     {
@@ -57,6 +57,7 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path, ui
     {
         triangulate(left_img, right_img, prev_left_feature_pts, max_features, Mat(), kept_left_pts, kept_ids); // detect initial features
         this->prev_left_img = left_img;
+        this->keyframe = true;
         return;
     }
 
@@ -100,10 +101,10 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path, ui
         vector<Point2f> new_pts;
         int features_to_find = max_features - kept_left_pts.size();
         triangulate(left_img, right_img, new_pts, features_to_find, mask, kept_left_pts, kept_ids); // find new features with the mask
-        keyframe = true;
+        this->keyframe = true;
     }
 
-    if (keyframe)
+    if (this->keyframe)
     {
         this->numb_keyframes++;
         this->avg_mae += reprojectionError(kept_left_pts, kept_ids);

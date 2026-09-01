@@ -2,6 +2,7 @@
 #include "vio.hpp"
 #include "image_reader.hpp"
 #include "filters.hpp"
+#include <utility>
 
 #define IMU_CALIB_SIZE 200.0
 // Initial filtered IMU data with 2nd order Chebyshev LP filter
@@ -93,6 +94,13 @@ int main(int argc, char **argv)
                 estimator->update(t_cam);
                 cout<<"Frame "<<camera_frame<<", Estimate size: "<<estimator->state_estimate.size()<<endl;
                 camera_frame++;
+
+                if (estimator->keyframe)
+                {
+                    estimator->enqueueKeyframe(estimator->createNode());
+                    estimator->resetCovariance(estimator->P_keyframe);
+                }
+
             }
             estimator->state_estimate.push_back(estimator->last_estimate);
             rclcpp::spin_some(estimator);
