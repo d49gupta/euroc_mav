@@ -15,6 +15,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <nav_msgs/msg/path.hpp>
+#include "dataset_config.hpp"
 
 #define FRAME_THRESH 5
 #define REPROJ_ERR 5
@@ -24,6 +25,7 @@
 #define MIN_PARALLAX_APPEND_RAD 0.0034906585 // 0.2 degs
 #define MIN_PARALLAX_REFINE_RAD 0.0174532925 // 1 degree
 #define MAX_STEP_DIST 1.25
+#define MAX_KEYFRAME_GAP 20
 
 using namespace std;
 using namespace cv;
@@ -75,89 +77,49 @@ class StereoTracker : public rclcpp::Node
         const int max_level = 3;
         const cv::TermCriteria term_crit = cv::TermCriteria(cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 30, 0.01);
 
-        Mat K_left = (cv::Mat_<double>(3, 3) << 458.654,  0, 367.215,
-                                                0, 457.296, 248.375,
-                                                0,  0,  1); // left intrinsic matrix
-
-        cv::Mat D_left = (cv::Mat_<double>(1, 4) << -0.28340811, 0.07395907, 0.00019359, 1.76187114e-05); // left distortion coefficients
-        Mat K_right = (cv::Mat_<double>(3, 3) << 457.587,  0, 379.999,
-                                                0, 456.134, 255.238,
-                                                0,  0,  1);
-
-        cv::Mat D_right = (cv::Mat_<double>(1, 4) << -0.28368365,  0.07451284, -0.00010473, -3.55590700e-05);
+        // Camera intrinsics/distortion, loaded from DatasetConfig (cam0/cam1 sensor.yaml)
+        Mat K_left, D_left, K_right, D_right;
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr point_cloud_pub;
         rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub;
         nav_msgs::msg::Path path;
         unordered_map<int, Pose> camera_pose;
 
         // Extrinsic matrix from left camera to IMU body frame
-        cv::Mat R_B_C0 = (cv::Mat_<double>(3, 3) << 0.0148655429818, -0.999880929698,  0.00414029679422,
-                                                    0.999557249008,   0.0149672133247,  0.025715529948,
-                                                    -0.0257744366974,  0.00375618835797, 0.999660727178);
-        cv::Mat t_B_C0 = (cv::Mat_<double>(3, 1) << -0.0216401454975, -0.064676986768, 0.00981073058949);
-
-        const Eigen::Matrix3d R_B_C0_eigen = (Eigen::Matrix3d() <<
-            0.0148655429818,  -0.999880929698,   0.00414029679422,
-            0.999557249008,    0.0149672133247,  0.025715529948,
-            -0.0257744366974,  0.00375618835797, 0.999660727178).finished();
-        const Eigen::Vector3d t_B_C0_eigen{-0.0216401454975, -0.064676986768, 0.00981073058949};
+        cv::Mat R_B_C0, t_B_C0;
+        Eigen::Matrix3d R_B_C0_eigen;
+        Eigen::Vector3d t_B_C0_eigen;
 
         // Extrinsic matrix from right camera to IMU body frame
-        cv::Mat R_B_C1 = (cv::Mat_<double>(3, 3) << 0.0125552670891, -0.999755099723,  0.0182237714554,
-                                                    0.999598781151,   0.0130119051815, 0.0251588363115,
-                                                    -0.0253898008918,  0.0179005838253, 0.999517347078);
-        cv::Mat t_B_C1 = (cv::Mat_<double>(3, 1) << -0.0198435579556, 0.0453689425024, 0.00786212447038);
+        cv::Mat R_B_C1, t_B_C1;
 
         // Inverted extrinsics left camera -> IMU body frame
-        cv::Mat R_C_B0 = R_B_C0.t();
-        cv::Mat t_C_B0 = -R_B_C0.t() * t_B_C0;
-
-        Eigen::Matrix3d R_C_B0_eigen = (Eigen::Matrix3d() <<
-            R_C_B0.at<double>(0,0), R_C_B0.at<double>(0,1), R_C_B0.at<double>(0,2),
-            R_C_B0.at<double>(1,0), R_C_B0.at<double>(1,1), R_C_B0.at<double>(1,2),
-            R_C_B0.at<double>(2,0), R_C_B0.at<double>(2,1), R_C_B0.at<double>(2,2)).finished();
-        Eigen::Vector3d t_C_B0_eigen{t_C_B0.at<double>(0), t_C_B0.at<double>(1), t_C_B0.at<double>(2)};
+        cv::Mat R_C_B0, t_C_B0;
+        Eigen::Matrix3d R_C_B0_eigen;
+        Eigen::Vector3d t_C_B0_eigen;
 
         // Transformation matrix: left camera -> world transformation
         cv::Mat R_W_C;
         cv::Mat t_W_C;
 
         // Transformation from left->right camera
-        cv::Mat R_left_right = R_B_C1.t() * R_B_C0;
-        cv::Mat t_left_right = R_B_C1.t() * (t_B_C0 - t_B_C1);
+        cv::Mat R_left_right, t_left_right;
         cv::Mat R1, R2, P1, P2, Q;
-        cv::Size image_size{752, 480};
+        cv::Size image_size;
 
-        // Transformation from body->vicon frame
-        cv::Mat R_V_B = (cv::Mat_<double>(3, 3) <<
-            0.33638, -0.02078,  0.94150,
-            -0.01749, -0.99972, -0.01582,
-            0.94156, -0.01114, -0.33665);
+        // Extrinsic matrix from vicon marker to IMU body frame (T_BS in vicon0/sensor.yaml)
+        Eigen::Matrix3d R_B_V;
+        Eigen::Vector3d t_B_V;
 
-        cv::Mat t_V_B = (cv::Mat_<double>(3, 1) <<
-            0.092907, -0.028556, -0.107015);
-
-        Eigen::Matrix3d R_V_B_eigen = (Eigen::Matrix3d() <<
-            R_V_B.at<double>(0,0), R_V_B.at<double>(0,1), R_V_B.at<double>(0,2),
-            R_V_B.at<double>(1,0), R_V_B.at<double>(1,1), R_V_B.at<double>(1,2),
-            R_V_B.at<double>(2,0), R_V_B.at<double>(2,1), R_V_B.at<double>(2,2)).finished();
-        Eigen::Quaterniond q_V_B{R_V_B_eigen};
-
-        // Forward T_BS (vicon marker -> body), recovered by inverting R_V_B/t_V_B
-        Eigen::Matrix3d R_B_V = R_V_B_eigen.transpose();
-        Eigen::Vector3d t_V_B_eigen{t_V_B.at<double>(0), t_V_B.at<double>(1), t_V_B.at<double>(2)};
-        Eigen::Vector3d t_B_V = -R_B_V * t_V_B_eigen;
-
-        // Ground truth vicon marker pose at t=0 (vicon0/data.csv, timestamp 1403715273265220000)
+        // Ground truth vicon marker pose at t=0 (vicon0/data.csv row closest to the first camera frame)
         // Maps vicon marker -> room (ground truth)
-        Eigen::Quaterniond q_vicon0{0.993271232, -0.008876672, 0.022388759, 0.113279336};
-        Eigen::Vector3d t_vicon0{0.786659422, 2.176692611, 1.061934815};
+        Eigen::Quaterniond q_vicon0;
+        Eigen::Vector3d t_vicon0;
 
         // Ground truth state estimate at t=0
-        Eigen::Quaterniond q_gt0{0.060514, -0.828459, -0.058956, -0.553641};
-        Eigen::Vector3d t_gt_0{0.878612, 2.14247, 0.947262};
+        Eigen::Quaterniond q_gt0;
+        Eigen::Vector3d t_gt_0;
 
-        // World(VO) -> Vicon room-frame alignment, derived in the constructor from q_gt0/t_gt0
+        // World(VO) -> Vicon room-frame alignment, derived in the constructor from q_vicon0/t_vicon0
         Eigen::Matrix3d R_init;
         Eigen::Vector3d t_init;
 
@@ -169,7 +131,7 @@ class StereoTracker : public rclcpp::Node
         cv::Ptr<cv::ORB> orb = cv::ORB::create();
 
     public:
-        StereoTracker(string nodeName);
+        StereoTracker(string nodeName, const DatasetConfig& config);
         void processFrame(string left_img_path, string right_img_path, uint64_t timestep);
         void visualizeMatch(string left_img_path, string right_img_path);
         void triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Point2f>& feature_pts, const int numb_features, const cv::Mat& mask, 
@@ -191,6 +153,7 @@ class StereoTracker : public rclcpp::Node
         int numb_keyframes = 0;
         double avg_mae = 0;
         bool keyframe;
+        int last_keyframe_frame_id = 0;
 };
 
 #endif

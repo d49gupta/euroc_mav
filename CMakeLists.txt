@@ -32,6 +32,8 @@ add_executable(imu
 
 add_executable(cam
   image_reader.cpp
+  dataset_config.cpp
+  math_utils.cpp
   vo.cpp
   main_cam.cpp
 )
@@ -41,6 +43,7 @@ add_executable(vio
   math_utils.cpp
   ahrs.cpp
   image_reader.cpp
+  dataset_config.cpp
   vo.cpp
   vio.cpp
   main_vio.cpp

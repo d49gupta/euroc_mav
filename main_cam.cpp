@@ -1,15 +1,18 @@
 #include "image_reader.hpp"
 #include "vo.hpp"
+#include "dataset_config.hpp"
 
 int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
-    std::unique_ptr<imageReader> reader = std::make_unique<imageReader>("src/vicon_room1/vicon_room1/V1_01_easy/V1_01_easy");
+    const string dataset_root = "src/vicon_room1/vicon_room1/V1_01_easy/V1_01_easy";
+    std::unique_ptr<imageReader> reader = std::make_unique<imageReader>(dataset_root);
     reader->datasetLoader();
-    
+
     cout<<"First timestamp: "<<reader->frame_cam_timestamp[0][0]<<endl;
 
-    auto stereo_tracker = std::make_shared<StereoTracker>("stereo_tracker");
+    DatasetConfig config = loadDatasetConfig(dataset_root, reader->frame_cam_timestamp[0][0]);
+    auto stereo_tracker = std::make_shared<StereoTracker>("stereo_tracker", config);
     for (size_t i = 0; i < reader->frame_cam_names.size() && rclcpp::ok(); i++)
     {
         string left_path = reader->frame_cam_names[i][0];

@@ -12,6 +12,13 @@ namespace
             : R_meas(R_meas), t_meas(t_meas), sqrt_information(sqrt_information) {}
 
         template <typename T>
+        // take in state from previous and current node and outputs residual
+        // Initially, relative pose between pose_i, pose_j and T_meas are the same, but as Ceres optimizes node poses
+        // pose_i and pose_j will deviate from const members T_meas
+        // For loop closure, residual is not initially 0 since you're comparing youre predicted ESKF pose
+        // to one time RANSAC estimated pose at that same node (since landmarks are in world frame)
+        // you're basically comparing sum of relative transforms between loop closure node and current node the long way and short way
+        // which results in the residual that CERES optimizes for along with the rest of the graph
         bool operator()(const T* const pose_i, const T* const pose_j, T* residuals_ptr) const
         {
             Eigen::Matrix<T, 3, 3> R_i, R_j;
@@ -25,6 +32,7 @@ namespace
             Eigen::Matrix<T, 3, 3> R_rel_predicted = R_i_inv * R_j;
             Eigen::Matrix<T, 3, 1> t_rel_predicted = R_i_inv * (t_j - t_i);
 
+            // take residual between predicted relative pose and measured relative pose
             Eigen::Matrix<T, 3, 3> R_error = R_meas.cast<T>().transpose() * R_rel_predicted;
             T angle_axis_error[3];
             ceres::RotationMatrixToAngleAxis(R_error.data(), angle_axis_error);
@@ -35,6 +43,7 @@ namespace
             residuals(4) = angle_axis_error[1];
             residuals(5) = angle_axis_error[2];
 
+            // apply information matrix weighting to residuals to update residuals
             residuals.applyOnTheLeft(sqrt_information.cast<T>());
             return true;
         }
@@ -62,7 +71,7 @@ void VisualInertialOdometry::init_params()
     this->A = Eigen::Matrix<double,15,15>::Identity();
     this->Q.setZero();
 
-    // TODO: vocab.load("path/to/vocabulary.yml.gz") once a vocabulary has been trained
+    this->vocab.load("src/DBow3/orbvoc.dbow3"); // pretrained ORB vocabulary (ORB-SLAM2's, generic scenes)
     this->db.setVocabulary(this->vocab, false, 0);
 
     // TODO: CHECK R VALUES (update dynamically by claculating std at ecah frame)
@@ -176,6 +185,9 @@ void VisualInertialOdometry::update(uint64_t timestep)
         Eigen::Vector3d P_B = R_W_B.transpose() * (P_W_eigen - p_W_B); // landmark relative to current IMU frame
         Eigen::Matrix3d pb_skew = VectoSkew(P_B);
 
+        // if (P_C.z() <= MIN_UPDATE_DEPTH) // landmark predicted behind/too close to the camera - projection is degenerate, skip rather than blow up 1/z terms
+        //     continue;
+
         double u_proj = P_C.x() / P_C.z();
         double v_proj = P_C.y() / P_C.z();
         Eigen::Vector2d residual(left_pt.x - u_proj, left_pt.y - v_proj);
@@ -184,10 +196,18 @@ void VisualInertialOdometry::update(uint64_t timestep)
         J_proj << 1.0/P_C.z(), 0, -P_C.x()/(P_C.z()*P_C.z()),
                 0, 1.0/P_C.z(), -P_C.y()/(P_C.z()*P_C.z());
 
-        H.block<2,3>(0,0) = J_proj * (-R_C_W);                           
+        H.block<2,3>(0,0) = J_proj * (-R_C_W);
         H.block<2,3>(0,6) = J_proj * R_B_C0_eigen.transpose() * pb_skew;
 
         Eigen::Matrix<double, 2, 2>  S = this->H * this->P * this->H.transpose() + this->R;
+
+        // Reject this landmark's correction if the residual is inconsistent with the filter's current
+        // uncertainty (Mahalanobis gate) - guards against a single bad VO association applying a huge,
+        // unchecked correction and corrupting P for every subsequent update this frame
+        // double mahalanobis_dist2 = residual.transpose() * S.inverse() * residual;
+        // if (mahalanobis_dist2 > CHI_SQUARE_95_2DOF)
+        //     continue;
+
         Eigen::Matrix<double, 15, 2> K = this->P * this->H.transpose() * S.inverse();
         Eigen::Matrix<double, 15, 1> correction = K * residual;
 
@@ -492,6 +512,15 @@ void VisualInertialOdometry::slamLoop()
             bool success = cv::solvePnPRansac(object_points, image_points, K_left, D_left, rvec_loop, tvec_loop, true, 100, 3.0F, 0.99, inliers);
             if (!success || inliers.size() < MIN_PNP_INLIERS)
                 continue;
+                
+            std::vector<cv::Point3f> object_points_inliers;
+            std::vector<cv::Point2f> image_points_inliers;
+            for (int inlier_idx : inliers)
+            {
+                object_points_inliers.push_back(object_points[inlier_idx]);
+                image_points_inliers.push_back(image_points[inlier_idx]);
+            }
+            cv::solvePnPRefineLM(object_points_inliers, image_points_inliers, K_left, D_left, rvec_loop, tvec_loop);
 
             // rvec_loop/tvec_loop are T_C_W (world->camera, standard PnP convention) for node.
             // candidate_node.rvec/tvec are T_W_B (body-in-world, ESKF convention)

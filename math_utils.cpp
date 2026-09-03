@@ -147,3 +147,17 @@ Eigen::Matrix3d vectoR(Eigen::Vector3d& rvec)
     }
     return mat;
 }
+
+Eigen::Matrix3d toEigen3x3(const cv::Mat& m)
+{
+    Eigen::Matrix3d out;
+    out << m.at<double>(0,0), m.at<double>(0,1), m.at<double>(0,2),
+            m.at<double>(1,0), m.at<double>(1,1), m.at<double>(1,2),
+            m.at<double>(2,0), m.at<double>(2,1), m.at<double>(2,2);
+    return out;
+}
+
+Eigen::Vector3d toEigen3x1(const cv::Mat& v)
+{
+    return Eigen::Vector3d(v.at<double>(0), v.at<double>(1), v.at<double>(2));
+}

@@ -2,6 +2,7 @@
 #include "vio.hpp"
 #include "image_reader.hpp"
 #include "filters.hpp"
+#include "dataset_config.hpp"
 #include <utility>
 
 #define IMU_CALIB_SIZE 200.0
@@ -32,12 +33,14 @@ int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
 
+    const string dataset_root = "src/vicon_room1/vicon_room1/V1_01_easy/V1_01_easy";
+
     // read in IMU data
-    IMUReader imu_reader("src/vicon_room1/vicon_room1/V1_01_easy/V1_01_easy/mav0/imu0/data.csv");
+    IMUReader imu_reader(dataset_root + "/mav0/imu0/data.csv");
     imu_reader.readCSV();
 
     // read in camera image paths
-    std::unique_ptr<imageReader> image_reader = std::make_unique<imageReader>("src/vicon_room1/vicon_room1/V1_01_easy/V1_01_easy");
+    std::unique_ptr<imageReader> image_reader = std::make_unique<imageReader>(dataset_root);
     image_reader->datasetLoader();
 
     if (imu_reader.data.empty() || image_reader->frame_cam_names.empty())
@@ -46,8 +49,11 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    // anchor dataset intrinsics/extrinsics/ground-truth to the first camera frame's timestamp
+    DatasetConfig config = loadDatasetConfig(dataset_root, image_reader->frame_cam_timestamp[0][0]);
+
     int camera_frame = 0;
-    auto estimator = std::make_shared<VisualInertialOdometry>("stereo_tracker");
+    auto estimator = std::make_shared<VisualInertialOdometry>("stereo_tracker", config);
     estimator->init_params();
 
     // initial feature detection and map, no state estimate available
@@ -68,7 +74,7 @@ int main(int argc, char **argv)
     init_state.timestamp = imu_reader.data[IMU_CALIB_SIZE-1].timestamp;
     Eigen::Vector3d init_gyro_bias = sum_gyro / IMU_CALIB_SIZE;
     init_state.gyro_bias = init_gyro_bias;
-    Eigen::Vector3d init_accel_bias(-0.012492, 0.547666, 0.069073); // use initial accel bias from ground truth state estimate for better filtering
+    Eigen::Vector3d init_accel_bias = config.init_accel_bias; // initial accel bias from ground truth state estimate for better filtering
     init_state.accel_bias = init_accel_bias;
     estimator->state_estimate.push_back(init_state);
     estimator->last_estimate = init_state;
@@ -106,6 +112,7 @@ int main(int argc, char **argv)
             rclcpp::spin_some(estimator);
         }
 
+    estimator->outputPose("src/build/vo_estimate.csv");
     estimator->outputState("src/build/vio_estimate.csv");
     rclcpp::shutdown();
     return 0;

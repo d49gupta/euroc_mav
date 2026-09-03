@@ -17,6 +17,8 @@
 #define SCORE_THRESHOLD 0.05 // bounded [0, 1] where 1.0 is identical
 // Run analysis on score threshold after offline pass for better dynamic threshold
 #define MIN_PNP_INLIERS 15 // minimum RANSAC inliers to accept a loop-closure geometric verification
+#define MIN_UPDATE_DEPTH 0.1 // reject an EKF landmark update if predicted depth is at/behind the camera (meters)
+#define CHI_SQUARE_95_2DOF 5.99 // Mahalanobis gate for a 2-dof (u,v) residual at 95% confidence
 
 using namespace std;
 using namespace cv;
@@ -45,7 +47,7 @@ struct KeyframeNode
 class VisualInertialOdometry : public StereoTracker
 {
     public:
-        VisualInertialOdometry(const string nodeName) : StereoTracker(nodeName)
+        VisualInertialOdometry(const string nodeName, const DatasetConfig& config) : StereoTracker(nodeName, config)
         {
             slam_thread = std::thread(&VisualInertialOdometry::slamLoop, this);
         }
