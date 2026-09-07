@@ -4,6 +4,8 @@
 #include <cmath>
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
+#include <opencv2/core.hpp>
+#include <opencv2/opencv.hpp>
 using namespace std;
 
 #define CLOSE_TO_ZERO 0.000001
@@ -23,5 +25,7 @@ void SLERP_v3(Eigen::Vector3d& a, const Eigen::Vector3d& b, double gain);
 Eigen::Vector3d quat_to_eulers(const Eigen::Quaterniond q);
 Eigen::Matrix3d VectoSkew(Eigen::Vector3d& vec);
 Eigen::Matrix3d vectoR(Eigen::Vector3d& rvec);
+Eigen::Matrix3d toEigen3x3(const cv::Mat& m);
+Eigen::Vector3d toEigen3x1(const cv::Mat& v);
 
 #endif

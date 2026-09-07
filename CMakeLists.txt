@@ -15,6 +15,8 @@ add_compile_options(-Wno-class-memaccess)
 
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(DBoW3 REQUIRED)
+find_package(Ceres REQUIRED)
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -22,28 +24,30 @@ find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 
 add_executable(imu
-  csv_reader.cpp
-  math_utils.cpp
-  ahrs.cpp
-  main_imu.cpp
+  src/csv_reader.cpp
+  src/math_utils.cpp
+  src/ahrs.cpp
+  core/main_imu.cpp
 )
 
 add_executable(cam
-  image_reader.cpp
-  vo.cpp
-  main_cam.cpp
+  src/image_reader.cpp
+  src/dataset_config.cpp
+  src/math_utils.cpp
+  src/vo.cpp
+  core/main_cam.cpp
 )
 
 add_executable(vio
-  csv_reader.cpp
-  math_utils.cpp
-  ahrs.cpp
-  image_reader.cpp
-  vo.cpp
-  vio.cpp
-  main_vio.cpp
+  src/csv_reader.cpp
+  src/math_utils.cpp
+  src/ahrs.cpp
+  src/image_reader.cpp
+  src/dataset_config.cpp
+  src/vo.cpp
+  src/vio.cpp
+  core/main_vio.cpp
 )
-
 
 target_link_libraries(imu
   Eigen3::Eigen
@@ -52,29 +56,35 @@ target_link_libraries(imu
 target_link_libraries(cam
   ${OpenCV_LIBS}
   Eigen3::Eigen
+  ${DBoW3_LIBS}
+  ${CERES_LIBRARIES}
 )
 
 target_link_libraries(vio
   ${OpenCV_LIBS}
   Eigen3::Eigen
+  ${DBoW3_LIBS}
+  ${CERES_LIBRARIES}
 )
 
 target_include_directories(imu PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/inc
   ${Eigen3_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
 )
 
 target_include_directories(cam PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/inc
   ${Eigen3_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
 )
 
 target_include_directories(vio PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/inc
   ${Eigen3_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
+  ${DBoW3_INCLUDE_DIRS}
+  ${CERES_INCLUDE_DIRS}
 )
 
 ament_target_dependencies(imu rclcpp std_msgs sensor_msgs nav_msgs)

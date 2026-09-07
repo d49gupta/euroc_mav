@@ -1,6 +1,7 @@
 #include "vo.hpp"
+#include "math_utils.hpp"
 
-StereoTracker::StereoTracker(string nodeName) : Node(nodeName) 
+StereoTracker::StereoTracker(string nodeName, const DatasetConfig& config) : Node(nodeName)
 {
     this->point_cloud_pub = this->create_publisher<sensor_msgs::msg::PointCloud2>("/vo/point_cloud", 10);
     this->path_pub = this->create_publisher<nav_msgs::msg::Path>("/vo/path", 10);
@@ -22,12 +23,49 @@ StereoTracker::StereoTracker(string nodeName) : Node(nodeName)
         << "mean_residual,max_residual,dx_norm,"
         << "x,y,z\n";
 
+    // Camera intrinsics/distortion + image size (cam0/cam1 sensor.yaml)
+    this->K_left = config.K_left;
+    this->D_left = config.D_left;
+    this->K_right = config.K_right;
+    this->D_right = config.D_right;
+    this->image_size = config.image_size;
+
+    // Extrinsic matrix from left camera to IMU body frame
+    this->R_B_C0 = config.R_B_C0;
+    this->t_B_C0 = config.t_B_C0;
+    this->R_B_C0_eigen = toEigen3x3(R_B_C0);
+    this->t_B_C0_eigen = toEigen3x1(t_B_C0);
+
+    // Extrinsic matrix from right camera to IMU body frame
+    this->R_B_C1 = config.R_B_C1;
+    this->t_B_C1 = config.t_B_C1;
+
+    // Inverted extrinsics left camera -> IMU body frame
+    this->R_C_B0 = R_B_C0.t();
+    this->t_C_B0 = -R_B_C0.t() * t_B_C0;
+    this->R_C_B0_eigen = toEigen3x3(R_C_B0);
+    this->t_C_B0_eigen = toEigen3x1(t_C_B0);
+
+    // Transformation from left->right camera, needed as input to stereoRectify below
+    this->R_left_right = R_B_C1.t() * R_B_C0;
+    this->t_left_right = R_B_C1.t() * (t_B_C0 - t_B_C1);
+
     cv::stereoRectify(K_left, D_left, K_right, D_right, image_size,
                    R_left_right, t_left_right,
                    R1, R2, P1, P2, Q,
                    cv::CALIB_ZERO_DISPARITY, -1, image_size);
 
-    // Vicon marker pose in the VO's world frame at t=0 
+    // Extrinsic matrix from vicon marker to IMU body frame
+    this->R_B_V = toEigen3x3(config.R_B_V);
+    this->t_B_V = toEigen3x1(config.t_B_V);
+
+    // Ground truth vicon marker pose at t=0, and ground truth state estimate at t=0
+    this->q_vicon0 = config.q_vicon0;
+    this->t_vicon0 = config.t_vicon0;
+    this->q_gt0 = config.q_gt0;
+    this->t_gt_0 = config.t_gt_0;
+
+    // Vicon marker pose in the VO's world frame at t=0
     // composed with the camera->body and body->marker static extrinsics since camera to world is I at t=0
     Eigen::Matrix3d R_worldVO_marker0 = R_C_B0_eigen * R_B_V;
     Eigen::Vector3d t_worldVO_marker0 = R_C_B0_eigen * t_B_V + t_C_B0_eigen;
@@ -45,7 +83,7 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path, ui
     cv::Mat right_img = cv::imread(right_img_path, IMREAD_GRAYSCALE);
     vector<cv::Point2f> kept_left_pts;
     vector<int> kept_ids;
-    bool keyframe = false;
+    this->keyframe = false;
 
     if (left_img.empty() || right_img.empty())
     {
@@ -57,6 +95,7 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path, ui
     {
         triangulate(left_img, right_img, prev_left_feature_pts, max_features, Mat(), kept_left_pts, kept_ids); // detect initial features
         this->prev_left_img = left_img;
+        this->keyframe = true;
         return;
     }
 
@@ -91,19 +130,20 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path, ui
     }
 
     getPose(timestep);
-    if (kept_left_pts.size() < (size_t)(max_features * FEATURE_THRESH)) // if there arent enough tracked features, get new ones
+    bool features_low = kept_left_pts.size() < (size_t)(max_features * FEATURE_THRESH); // not enough tracked features
+    if (features_low)
     {
         Mat mask = Mat::ones(left_img.size(), CV_8UC1); // one channel canvas of 1's size of image
         for (const auto& pt : kept_left_pts)
             circle(mask, pt, 10, 0, -1); // fill a circle of radius 10 with 0, this blocks out 10 px radius around existing features
-        
+
         vector<Point2f> new_pts;
         int features_to_find = max_features - kept_left_pts.size();
         triangulate(left_img, right_img, new_pts, features_to_find, mask, kept_left_pts, kept_ids); // find new features with the mask
-        keyframe = true;
+        this->keyframe = true;
     }
 
-    if (keyframe)
+    if (this->keyframe)
     {
         this->numb_keyframes++;
         this->avg_mae += reprojectionError(kept_left_pts, kept_ids);
@@ -448,7 +488,7 @@ void StereoTracker::outputPose(string filename)
         Eigen::Vector3d p_W_B = R_W_C * t_C_B0_eigen + p_W_C;
 
         // Vicon marker pose in the VO's world frame: compose the current body pose
-        // with the marker's rigid mounting offset (forward T_BS, recovered from R_V_B/t_V_B)
+        // with the marker's rigid mounting offset (T_BS from vicon0/sensor.yaml)
         Eigen::Matrix3d R_W_V = R_W_B * R_B_V;
         Eigen::Vector3d p_W_V = R_W_B * t_B_V + p_W_B;
 
@@ -713,7 +753,11 @@ void StereoTracker::optimizeLandmark()
                 current_error = new_error;
                 lambda *= 0.5;
                 if (cv::norm(dx) < 1e-3) // landmark has converged, stop iterations
+                {
+                    // landmark position has converged, start using for pose estimation
+                    global_map[id].usable = true;
                     break;
+                }
             }
             else
             {
