@@ -49,6 +49,7 @@ struct Landmark
     int reprojection_count = 0;
     vector<Observation> observations;
     int last_optimized_frame = -1;
+    bool usable = false;
 };
 
 struct Pose

@@ -753,7 +753,11 @@ void StereoTracker::optimizeLandmark()
                 current_error = new_error;
                 lambda *= 0.5;
                 if (cv::norm(dx) < 1e-3) // landmark has converged, stop iterations
+                {
+                    // landmark position has converged, start using for pose estimation
+                    global_map[id].usable = true;
                     break;
+                }
             }
             else
             {

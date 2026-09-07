@@ -64,7 +64,7 @@ int main(int argc, char **argv)
     Eigen::Vector3d sum_accel = Eigen::Vector3d::Zero();
     for (int a = 0; a < IMU_CALIB_SIZE; a++)
     {
-        // CHEBY_LP_FILT(imu_reader.data[a]); // Filter IMU data in place (pass by reference)
+        CHEBY_LP_FILT(imu_reader.data[a]); // Filter IMU data in place (pass by reference)
         sum_gyro += imu_reader.data[a].gyro;
         sum_accel += imu_reader.data[a].accel;
     }
@@ -83,10 +83,9 @@ int main(int argc, char **argv)
 
     // MAIN LOOP
     for (size_t index = IMU_CALIB_SIZE; index < imu_reader.data.size() && rclcpp::ok(); index++)
-    // for (size_t index = IMU_CALIB_SIZE; index < 1000 && rclcpp::ok(); index++)
     {
         
-        // CHEBY_LP_FILT(imu_reader.data[index]);
+        CHEBY_LP_FILT(imu_reader.data[index]);
         estimator->applyPendingCorrection(); // pick up a solved loop-closure correction, if slamLoop() staged one
         uint64_t t_now = imu_reader.data[index].timestamp;
         uint64_t t_last = imu_reader.data[index-1].timestamp;

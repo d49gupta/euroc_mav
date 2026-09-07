@@ -165,7 +165,7 @@ void VisualInertialOdometry::update()
 
     for (size_t a = 0; a < undistorted_left_pts.size(); a++)
     {
-        if (!this->global_map.count(this->last_inlier_ids[a]))
+        if (!this->global_map.count(this->last_inlier_ids[a]) || !this->global_map[this->last_inlier_ids[a]].usable)
             continue;
 
         this->H = Eigen::Matrix<double, 2, 15>::Zero();
@@ -195,6 +195,7 @@ void VisualInertialOdometry::update()
         J_proj << 1.0/P_C.z(), 0, -P_C.x()/(P_C.z()*P_C.z()),
                 0, 1.0/P_C.z(), -P_C.y()/(P_C.z()*P_C.z());
 
+        // Landmark position is not dependant on velocity or IMU biases so Jacobian for those states is 0
         H.block<2,3>(0,0) = J_proj * (-R_C_W);
         H.block<2,3>(0,6) = J_proj * R_B_C0_eigen.transpose() * pb_skew;
 
@@ -250,6 +251,7 @@ void VisualInertialOdometry::applyPendingCorrection()
          << "  pos_before=" << last_estimate.pos_estimate.transpose() << endl;
 
     // carry the SLAM pose-graph's correction onto the live ESKF pose only (no velocity or IMU biases)
+    // only need to correct last_estimate since VIO ESKF estimates sequentially based off only the last node
     last_estimate.pos_estimate = R_delta * last_estimate.pos_estimate + t_delta;
     last_estimate.orient_estimate = (Eigen::Quaterniond(R_delta) * last_estimate.orient_estimate).normalized();
 
@@ -600,7 +602,7 @@ void VisualInertialOdometry::slamLoop()
                 keyframe_store[i].tvec = (cv::Mat_<double>(3,1) << pose_params[i][3], pose_params[i][4], pose_params[i][5]);
             }
 
-            // calculate pose correction delta to optimize live ESKF estimates
+            // calculate pose correction delta between pre-optimized and optiized current node to optimize live ESKF estimates
             Eigen::Matrix3d R_after = toEigenRot(keyframe_store[curr_idx].rvec);
             Eigen::Vector3d t_after = toEigenVec(keyframe_store[curr_idx].tvec);
             Eigen::Matrix3d R_delta = R_after * R_before.transpose();
