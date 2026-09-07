@@ -24,29 +24,29 @@ find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 
 add_executable(imu
-  csv_reader.cpp
-  math_utils.cpp
-  ahrs.cpp
-  main_imu.cpp
+  src/csv_reader.cpp
+  src/math_utils.cpp
+  src/ahrs.cpp
+  core/main_imu.cpp
 )
 
 add_executable(cam
-  image_reader.cpp
-  dataset_config.cpp
-  math_utils.cpp
-  vo.cpp
-  main_cam.cpp
+  src/image_reader.cpp
+  src/dataset_config.cpp
+  src/math_utils.cpp
+  src/vo.cpp
+  core/main_cam.cpp
 )
 
 add_executable(vio
-  csv_reader.cpp
-  math_utils.cpp
-  ahrs.cpp
-  image_reader.cpp
-  dataset_config.cpp
-  vo.cpp
-  vio.cpp
-  main_vio.cpp
+  src/csv_reader.cpp
+  src/math_utils.cpp
+  src/ahrs.cpp
+  src/image_reader.cpp
+  src/dataset_config.cpp
+  src/vo.cpp
+  src/vio.cpp
+  core/main_vio.cpp
 )
 
 target_link_libraries(imu
@@ -68,19 +68,19 @@ target_link_libraries(vio
 )
 
 target_include_directories(imu PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/inc
   ${Eigen3_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
 )
 
 target_include_directories(cam PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/inc
   ${Eigen3_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
 )
 
 target_include_directories(vio PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/inc
   ${Eigen3_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
   ${DBoW3_INCLUDE_DIRS}
