@@ -154,7 +154,7 @@ void VisualInertialOdometry::predict(IMUSample& data, double dt)
     this->last_estimate = curr_estimate;
 }
 
-void VisualInertialOdometry::update(uint64_t timestep)
+void VisualInertialOdometry::update()
 {
     // use inliers from pnpsolveransac for measurements
     if (this->last_inlier_ids.empty() || this->last_inlier_pts.empty())
@@ -171,7 +171,6 @@ void VisualInertialOdometry::update(uint64_t timestep)
         this->H = Eigen::Matrix<double, 2, 15>::Zero();
         Eigen::Matrix3d R_W_B  = this->last_estimate.orient_estimate.toRotationMatrix();
         Eigen::Vector3d p_W_B  = this->last_estimate.pos_estimate;
-        this->last_estimate.timestamp = timestep;
 
         Eigen::Matrix3d R_W_C = R_W_B * R_B_C0_eigen;
         Eigen::Vector3d p_W_C = p_W_B + R_W_B * t_B_C0_eigen;
@@ -231,6 +230,30 @@ void VisualInertialOdometry::update(uint64_t timestep)
         Eigen::Matrix<double, 15, 15> I = Eigen::Matrix<double, 15, 15>::Identity();
         this->P = (I - K * H) * this->P;
     }
+}
+
+void VisualInertialOdometry::applyPendingCorrection()
+{
+    Eigen::Matrix3d R_delta;
+    Eigen::Vector3d t_delta;
+    {
+        std::lock_guard<std::mutex> lock(correction_mutex);
+        if (!has_pending_correction)
+            return;
+        R_delta = pending_R_delta;
+        t_delta = pending_t_delta;
+        has_pending_correction = false;
+    }
+
+    Eigen::AngleAxisd aa(R_delta);
+    cout << "DBG correction applied: angle=" << aa.angle() * 180.0 / M_PI << "deg  |t_delta|=" << t_delta.norm()
+         << "  pos_before=" << last_estimate.pos_estimate.transpose() << endl;
+
+    // carry the SLAM pose-graph's correction onto the live ESKF pose only (no velocity or IMU biases)
+    last_estimate.pos_estimate = R_delta * last_estimate.pos_estimate + t_delta;
+    last_estimate.orient_estimate = (Eigen::Quaterniond(R_delta) * last_estimate.orient_estimate).normalized();
+
+    cout << "DBG correction applied: pos_after=" << last_estimate.pos_estimate.transpose() << endl;
 }
 
 void VisualInertialOdometry::outputState(string filename)
@@ -484,8 +507,8 @@ void VisualInertialOdometry::slamLoop()
         bool loop_closed = false;
         for (const auto&r : results)
         {
-            // if (r.Score < SCORE_THRESHOLD)
-            //     continue;
+            if (r.Score < SCORE_THRESHOLD)
+                continue;
 
             KeyframeNode candidate_node = keyframe_store[r.Id];
             int candidate_frame_id = candidate_node.frame_id;
@@ -560,6 +583,10 @@ void VisualInertialOdometry::slamLoop()
 
         if (loop_closed)
         {
+            // snapshot this node's pre-optimization pose so we can measure how much the solve moved it
+            Eigen::Matrix3d R_before = toEigenRot(node.rvec);
+            Eigen::Vector3d t_before = toEigenVec(node.tvec);
+
             // only worth re-optimizing when a new loop edge actually changed the graph's constraints
             ceres::Solver::Options options;
             ceres::Solver::Summary summary;
@@ -572,7 +599,20 @@ void VisualInertialOdometry::slamLoop()
                 keyframe_store[i].rvec = (cv::Mat_<double>(3,1) << pose_params[i][0], pose_params[i][1], pose_params[i][2]);
                 keyframe_store[i].tvec = (cv::Mat_<double>(3,1) << pose_params[i][3], pose_params[i][4], pose_params[i][5]);
             }
-            loop_frames.push_back(this->frame_id);
+
+            // calculate pose correction delta to optimize live ESKF estimates
+            Eigen::Matrix3d R_after = toEigenRot(keyframe_store[curr_idx].rvec);
+            Eigen::Vector3d t_after = toEigenVec(keyframe_store[curr_idx].tvec);
+            Eigen::Matrix3d R_delta = R_after * R_before.transpose();
+            Eigen::Vector3d t_delta = t_after - R_delta * t_before;
+            {
+                std::lock_guard<std::mutex> correction_lock(correction_mutex);
+                pending_R_delta = R_delta;
+                pending_t_delta = t_delta;
+                has_pending_correction = true;
+            }
+
+            loop_frames.push_back(node.frame_id);
         }
     }
 }

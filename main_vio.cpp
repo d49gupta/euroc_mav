@@ -87,9 +87,10 @@ int main(int argc, char **argv)
     {
         
         // CHEBY_LP_FILT(imu_reader.data[index]);
+        estimator->applyPendingCorrection(); // pick up a solved loop-closure correction, if slamLoop() staged one
         uint64_t t_now = imu_reader.data[index].timestamp;
         uint64_t t_last = imu_reader.data[index-1].timestamp;
-        double dt = static_cast<double>(t_now - t_last) / 1e9;        
+        double dt = static_cast<double>(t_now - t_last) / 1e9;
         estimator->predict(imu_reader.data[index], dt);
         estimator->update_covariance(imu_reader.data[index], dt);
         estimator->last_estimate.timestamp = t_now;
@@ -98,7 +99,7 @@ int main(int argc, char **argv)
         {
                 uint64_t t_cam = image_reader->frame_cam_timestamp[camera_frame][0];
                 estimator->processFrame(image_reader->frame_cam_names[camera_frame][0], image_reader->frame_cam_names[camera_frame][1], t_cam);
-                estimator->update(t_cam);
+                estimator->update();
                 cout<<"Frame "<<camera_frame<<", Estimate size: "<<estimator->state_estimate.size()<<endl;
                 camera_frame++;
                 int diff = estimator->frame_id - last_slam_frame;

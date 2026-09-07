@@ -55,7 +55,8 @@ class VisualInertialOdometry : public StereoTracker
         }
 
         void predict(IMUSample& data, double dt); // IMU preintegration
-        void update(uint64_t timestep); // replace with VIO EKF
+        void update(); // replace with VIO EKF
+        void applyPendingCorrection(); // main thread: carries a solved loop-closure correction (if any) onto last_estimate's pose
         void outputState(string filename); // properly transform all states
         void outputTrajectory(string filename); // writes keyframe_store's (SLAM-corrected) poses
 
@@ -101,6 +102,13 @@ class VisualInertialOdometry : public StereoTracker
         std::condition_variable queue_cv;
         std::atomic<bool> running{true};
         std::thread slam_thread;
+
+        // hand-off for a solved loop-closure correction: slamLoop() stages it, the main thread's
+        // applyPendingCorrection() drains and applies it to last_estimate (position/orientation only)
+        std::mutex correction_mutex;
+        bool has_pending_correction = false;
+        Eigen::Matrix3d pending_R_delta;
+        Eigen::Vector3d pending_t_delta;
 
         // BoW vocabulary and database
         DBoW3::Vocabulary vocab;

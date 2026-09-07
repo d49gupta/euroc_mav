@@ -4,8 +4,8 @@ import csv
 import math
 import sys
 
-DATASET = "vicon_room1/vicon_room1/V1_01_easy/V1_01_easy/mav0"
-BUILD = "build"
+DATASET = "src/vicon_room1/vicon_room1/V1_01_easy/V1_01_easy/mav0"
+BUILD = "src/build"
 
 
 def load_rows(path, pos_cols, quat_cols):
