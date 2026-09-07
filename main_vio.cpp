@@ -79,6 +79,7 @@ int main(int argc, char **argv)
     estimator->state_estimate.push_back(init_state);
     estimator->last_estimate = init_state;
     estimator->g_ref = -sum_accel / IMU_CALIB_SIZE + init_accel_bias;
+    int last_slam_frame = 0;
 
     // MAIN LOOP
     for (size_t index = IMU_CALIB_SIZE; index < imu_reader.data.size() && rclcpp::ok(); index++)
@@ -100,11 +101,13 @@ int main(int argc, char **argv)
                 estimator->update(t_cam);
                 cout<<"Frame "<<camera_frame<<", Estimate size: "<<estimator->state_estimate.size()<<endl;
                 camera_frame++;
+                int diff = estimator->frame_id - last_slam_frame;
 
-                if (estimator->keyframe)
+                if (estimator->keyframe || diff >= MAX_KEYFRAME_GAP)
                 {
                     estimator->enqueueKeyframe(estimator->createNode());
                     estimator->resetCovariance(estimator->P_keyframe);
+                    last_slam_frame = estimator->frame_id;
                 }
 
             }

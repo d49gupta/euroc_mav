@@ -25,7 +25,6 @@
 #define MIN_PARALLAX_APPEND_RAD 0.0034906585 // 0.2 degs
 #define MIN_PARALLAX_REFINE_RAD 0.0174532925 // 1 degree
 #define MAX_STEP_DIST 1.25
-#define MAX_KEYFRAME_GAP 20
 
 using namespace std;
 using namespace cv;
@@ -153,7 +152,6 @@ class StereoTracker : public rclcpp::Node
         int numb_keyframes = 0;
         double avg_mae = 0;
         bool keyframe;
-        int last_keyframe_frame_id = 0;
 };
 
 #endif

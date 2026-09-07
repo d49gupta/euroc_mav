@@ -96,7 +96,6 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path, ui
         triangulate(left_img, right_img, prev_left_feature_pts, max_features, Mat(), kept_left_pts, kept_ids); // detect initial features
         this->prev_left_img = left_img;
         this->keyframe = true;
-        this->last_keyframe_frame_id = this->frame_id;
         return;
     }
 
@@ -132,8 +131,6 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path, ui
 
     getPose(timestep);
     bool features_low = kept_left_pts.size() < (size_t)(max_features * FEATURE_THRESH); // not enough tracked features
-    bool keyframe_gap_exceeded = (this->frame_id - this->last_keyframe_frame_id) >= MAX_KEYFRAME_GAP; // too long since last keyframe, even if tracking is healthy
-    // if (features_low || keyframe_gap_exceeded)
     if (features_low)
     {
         Mat mask = Mat::ones(left_img.size(), CV_8UC1); // one channel canvas of 1's size of image
@@ -149,7 +146,6 @@ void StereoTracker::processFrame(string left_img_path, string right_img_path, ui
     if (this->keyframe)
     {
         this->numb_keyframes++;
-        this->last_keyframe_frame_id = this->frame_id;
         this->avg_mae += reprojectionError(kept_left_pts, kept_ids);
     }
 

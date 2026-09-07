@@ -280,7 +280,7 @@ void VisualInertialOdometry::outputState(string filename)
 void VisualInertialOdometry::outputTrajectory(string filename)
 {
     std::ofstream csv_file(filename);
-    csv_file << "frame_id,p_x,p_y,p_z,q_w,q_x,q_y,q_z\n";
+    csv_file << "timestamp,frame_id,p_x,p_y,p_z,q_w,q_x,q_y,q_z\n";
     csv_file << std::fixed << std::setprecision(6);
 
     Eigen::Quaterniond prev_q_room_V = Eigen::Quaterniond::Identity();
@@ -311,7 +311,7 @@ void VisualInertialOdometry::outputTrajectory(string filename)
         prev_q_room_V = q_room_V;
         have_prev_q_room_V = true;
 
-        csv_file << kf.frame_id << ","
+        csv_file << kf.timestamp << "," << kf.frame_id << ","
                   << p_room_V.x() << "," << p_room_V.y() << "," << p_room_V.z() << ","
                   << q_room_V.w() << "," << q_room_V.x() << "," << q_room_V.y() << "," << q_room_V.z() << "\n";
     }
@@ -355,13 +355,14 @@ KeyframeNode VisualInertialOdometry::createNode()
             matched_landmarks.push_back(curr_landmarks[src]);
     }
 
+    stateEstimate& est = this->last_estimate;
     KeyframeNode keyframe_node;
+    keyframe_node.timestamp = est.timestamp;
     keyframe_node.frame_id = this->frame_id;
     keyframe_node.keypoints = computed_keypoints;
     keyframe_node.descriptors = descriptors;
     keyframe_node.landmarks = matched_landmarks;
 
-    stateEstimate& est = this->last_estimate;
     Eigen::Matrix3d R = est.orient_estimate.toRotationMatrix();
     cv::Mat R_cv = (cv::Mat_<double>(3,3) << R(0,0), R(0,1), R(0,2),
                                             R(1,0), R(1,1), R(1,2),
@@ -571,6 +572,7 @@ void VisualInertialOdometry::slamLoop()
                 keyframe_store[i].rvec = (cv::Mat_<double>(3,1) << pose_params[i][0], pose_params[i][1], pose_params[i][2]);
                 keyframe_store[i].tvec = (cv::Mat_<double>(3,1) << pose_params[i][3], pose_params[i][4], pose_params[i][5]);
             }
+            loop_frames.push_back(this->frame_id);
         }
     }
 }

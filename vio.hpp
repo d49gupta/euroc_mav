@@ -19,6 +19,7 @@
 #define MIN_PNP_INLIERS 15 // minimum RANSAC inliers to accept a loop-closure geometric verification
 #define MIN_UPDATE_DEPTH 0.1 // reject an EKF landmark update if predicted depth is at/behind the camera (meters)
 #define CHI_SQUARE_95_2DOF 5.99 // Mahalanobis gate for a 2-dof (u,v) residual at 95% confidence
+#define MAX_KEYFRAME_GAP 20
 
 using namespace std;
 using namespace cv;
@@ -35,6 +36,7 @@ struct stateEstimate
 
 struct KeyframeNode
 {
+    uint64_t timestamp;
     int frame_id;
     cv::Mat tvec;
     cv::Mat rvec;
@@ -68,6 +70,10 @@ class VisualInertialOdometry : public StereoTracker
                 slam_thread.join(); // guarantees the SLAM thread is fully done before we read keyframe_store
             outputTrajectory("src/build/slam_trajectory.csv");
             optimization_log.close();
+            cout<<"Number of loops detected: "<<loop_frames.size()<<endl;
+            for (auto loop : loop_frames)
+                cout<<loop<<" ";
+            cout<<endl;
         }
         KeyframeNode createNode();
         void enqueueKeyframe(KeyframeNode node); // thread-safe hand-off to the SLAM thread
@@ -77,6 +83,7 @@ class VisualInertialOdometry : public StereoTracker
         Eigen::Vector3d g_ref; // gravity vector at initial orientation
         Eigen::Matrix<double, 15, 15> P_keyframe; // covariance matrix that resets at keyframes
         std::vector<KeyframeNode> keyframe_store; // store keyframe nodes that match with BoW database
+        vector<int> loop_frames;
 
     private:
         void slamLoop(); // runs on slam_thread: waits for keyframes, will host loop-closure/pose-graph work
