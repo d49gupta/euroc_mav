@@ -1,0 +1,271 @@
+<?xml version="1.0" ?>
+<!--
+  Minimal Gazebo (gz-sim) world for generating stereo camera + 3D lidar + IMU
+  data with exact ground truth, as a stand-in for a real EuRoC-MAV-style
+  capture. This file only sets up the simulation and its sensor/ground-truth
+  topics; no lidar/vision processing is included here.
+
+  Model summary (model name: mav_rig):
+    base_link carries:
+      - imu sensor             gz topic: imu
+      - gpu_lidar (3D, 16-line) gz topics: lidar (LaserScan) and lidar/points (PointCloud2)
+      - stereo left camera     gz topic: stereo/left/image_raw (+ /camera_info)
+      - stereo right camera    gz topic: stereo/right/image_raw (+ /camera_info)
+                                (0.12 m baseline, cameras offset +/-0.06 m in y)
+    plugins on the model:
+      - OdometryPublisher   gz topic: ground_truth/odom (exact sim pose, zero noise)
+      - VelocityControl     gz topic: cmd_vel (drive the rig with a Twist)
+
+  NOTE ON SCENE TEXTURE: the props below are flat colored primitives, just
+  enough for a feature detector to see edges and corners. They are NOT a
+  substitute for real image texture; if your VO front end struggles to
+  find or track features, that's expected, and you'll want to add textured
+  materials (image albedo maps) to the walls/props.
+-->
+<sdf version="1.9">
+  <world name="euroc_room">
+
+    <physics name="1ms" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+          <material>
+            <ambient>0.6 0.6 0.6 1</ambient>
+            <diffuse>0.6 0.6 0.6 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Simple room walls, mostly so the lidar has something to hit -->
+    <model name="wall_north">
+      <static>true</static>
+      <pose>0 5 1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>10 0.2 2</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>10 0.2 2</size></box></geometry>
+          <material><ambient>0.7 0.5 0.3 1</ambient><diffuse>0.7 0.5 0.3 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="wall_south">
+      <static>true</static>
+      <pose>0 -5 1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>10 0.2 2</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>10 0.2 2</size></box></geometry>
+          <material><ambient>0.3 0.5 0.7 1</ambient><diffuse>0.3 0.5 0.7 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="wall_east">
+      <static>true</static>
+      <pose>5 0 1 0 0 1.5708</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>10 0.2 2</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>10 0.2 2</size></box></geometry>
+          <material><ambient>0.5 0.7 0.3 1</ambient><diffuse>0.5 0.7 0.3 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="wall_west">
+      <static>true</static>
+      <pose>-5 0 1 0 0 1.5708</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>10 0.2 2</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>10 0.2 2</size></box></geometry>
+          <material><ambient>0.7 0.3 0.5 1</ambient><diffuse>0.7 0.3 0.5 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Scattered clutter for visual feature diversity (see note at top) -->
+    <model name="prop_box_1">
+      <static>true</static>
+      <pose>1.5 1.0 0.25 0 0 0.3</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>0.5 0.5 0.5</size></box></geometry>
+          <material><ambient>0.8 0.2 0.2 1</ambient><diffuse>0.8 0.2 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="prop_box_2">
+      <static>true</static>
+      <pose>-1.2 2.0 0.4 0 0 0.9</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.3 0.3 0.8</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 0.8</size></box></geometry>
+          <material><ambient>0.2 0.8 0.3 1</ambient><diffuse>0.2 0.8 0.3 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="prop_cyl_1">
+      <static>true</static>
+      <pose>2.0 -1.5 0.3 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.2</radius><length>0.6</length></cylinder></geometry></collision>
+        <visual name="visual">
+          <geometry><cylinder><radius>0.2</radius><length>0.6</length></cylinder></geometry>
+          <material><ambient>0.9 0.7 0.1 1</ambient><diffuse>0.9 0.7 0.1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="prop_box_3">
+      <static>true</static>
+      <pose>-2.0 -1.0 0.15 0 0 1.1</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.4 0.6 0.3</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>0.4 0.6 0.3</size></box></geometry>
+          <material><ambient>0.2 0.3 0.9 1</ambient><diffuse>0.2 0.3 0.9 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <model name="prop_cyl_2">
+      <static>true</static>
+      <pose>0.5 -2.5 0.35 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.15</radius><length>0.7</length></cylinder></geometry></collision>
+        <visual name="visual">
+          <geometry><cylinder><radius>0.15</radius><length>0.7</length></cylinder></geometry>
+          <material><ambient>0.6 0.2 0.8 1</ambient><diffuse>0.6 0.2 0.8 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Sensor rig: stands in for the MAV. Gravity is disabled on its link
+         since no flight-dynamics model is included; it is moved purely via
+         the VelocityControl plugin (see cmd_vel below). -->
+    <model name="mav_rig">
+      <pose>0 0 1 0 0 0</pose>
+      <static>false</static>
+      <link name="base_link">
+        <gravity>false</gravity>
+        <inertial>
+          <mass>1.0</mass>
+          <inertia>
+            <ixx>0.01</ixx><iyy>0.01</iyy><izz>0.01</izz>
+            <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry><box><size>0.3 0.3 0.1</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 0.1</size></box></geometry>
+          <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material>
+        </visual>
+
+        <sensor name="imu_sensor" type="imu">
+          <always_on>1</always_on>
+          <update_rate>200</update_rate>
+          <topic>imu</topic>
+        </sensor>
+
+        <sensor name="lidar_sensor" type="gpu_lidar">
+          <pose>0 0 0.08 0 0 0</pose>
+          <always_on>1</always_on>
+          <update_rate>10</update_rate>
+          <topic>lidar</topic>
+          <lidar>
+            <scan>
+              <horizontal>
+                <samples>360</samples>
+                <resolution>1</resolution>
+                <min_angle>-3.141593</min_angle>
+                <max_angle>3.141593</max_angle>
+              </horizontal>
+              <vertical>
+                <samples>16</samples>
+                <resolution>1</resolution>
+                <min_angle>-0.261799</min_angle>
+                <max_angle>0.261799</max_angle>
+              </vertical>
+            </scan>
+            <range>
+              <min>0.3</min>
+              <max>30.0</max>
+              <resolution>0.01</resolution>
+            </range>
+          </lidar>
+          <visualize>true</visualize>
+        </sensor>
+
+        <sensor name="stereo_left" type="camera">
+          <pose>0.1 0.06 0 0 0 0</pose>
+          <always_on>1</always_on>
+          <update_rate>20</update_rate>
+          <topic>stereo/left/image_raw</topic>
+          <camera>
+            <horizontal_fov>1.396263</horizontal_fov>
+            <image><width>752</width><height>480</height><format>L8</format></image>
+            <clip><near>0.05</near><far>50</far></clip>
+          </camera>
+        </sensor>
+
+        <sensor name="stereo_right" type="camera">
+          <pose>0.1 -0.06 0 0 0 0</pose>
+          <always_on>1</always_on>
+          <update_rate>20</update_rate>
+          <topic>stereo/right/image_raw</topic>
+          <camera>
+            <horizontal_fov>1.396263</horizontal_fov>
+            <image><width>752</width><height>480</height><format>L8</format></image>
+            <clip><near>0.05</near><far>50</far></clip>
+          </camera>
+        </sensor>
+      </link>
+
+      <!-- Ground truth pose/twist: zero noise by construction, since this
+           is read directly from the physics state, not estimated. -->
+      <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+        <odom_frame>euroc_room/odom</odom_frame>
+        <robot_base_frame>mav_rig/base_link</robot_base_frame>
+        <odom_topic>ground_truth/odom</odom_topic>
+        <odom_publish_frequency>100</odom_publish_frequency>
+        <dimensions>3</dimensions>
+        <gaussian_noise>0.0</gaussian_noise>
+      </plugin>
+
+      <!-- Drive the rig by publishing geometry_msgs/Twist on /cmd_vel
+           (bridged below). Directly sets link velocity; no flight
+           dynamics/control loop involved. -->
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>cmd_vel</topic>
+      </plugin>
+    </model>
+
+  </world>
+</sdf>

@@ -98,4 +98,11 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# Gazebo simulation assets (world/launch/bridge config); no lidar or
+# vision processing code lives here -- see sim/README.md.
+install(DIRECTORY
+  sim/
+  DESTINATION share/${PROJECT_NAME}/sim
+)
+
 ament_package()
