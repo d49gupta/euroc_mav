@@ -22,6 +22,8 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package(message_filters REQUIRED)
 
 add_executable(imu
   src/csv_reader.cpp
@@ -47,6 +49,14 @@ add_executable(vio
   src/vo.cpp
   src/vio.cpp
   core/main_vio.cpp
+)
+
+# Subscribes to the sim's sensor + ground-truth topics (see sim/); no
+# fusion/estimation logic, just the data-in layer.
+add_executable(sim_subscribers
+  src/sim_subscribers.cpp
+  src/sim_dataset_config.cpp
+  core/main_sim_subscribers.cpp
 )
 
 target_link_libraries(imu
@@ -87,14 +97,27 @@ target_include_directories(vio PUBLIC
   ${CERES_INCLUDE_DIRS}
 )
 
+target_include_directories(sim_subscribers PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/inc
+  ${OpenCV_INCLUDE_DIRS}
+  ${Eigen3_INCLUDE_DIRS}
+)
+
+target_link_libraries(sim_subscribers
+  ${OpenCV_LIBS}
+  Eigen3::Eigen
+)
+
 ament_target_dependencies(imu rclcpp std_msgs sensor_msgs nav_msgs)
 ament_target_dependencies(cam rclcpp std_msgs sensor_msgs nav_msgs)
 ament_target_dependencies(vio rclcpp std_msgs sensor_msgs nav_msgs)
+ament_target_dependencies(sim_subscribers rclcpp std_msgs sensor_msgs nav_msgs cv_bridge message_filters)
 
 install(TARGETS
   imu
   cam
   vio
+  sim_subscribers
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -12,6 +12,8 @@
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>nav_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>message_filters</depend>
 
   <!-- Gazebo simulation (sim/ dir): world + sensor topics only -->
   <exec_depend>ros_gz_sim</exec_depend>

@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     libxml2-utils \
     ros-humble-rviz2 \
     ros-humble-cv-bridge \
+    ros-humble-message-filters \
     libopencv-dev \
     python3-opencv \
     libx11-xcb1 \
