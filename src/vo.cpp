@@ -78,16 +78,28 @@ StereoTracker::StereoTracker(string nodeName, const DatasetConfig& config) : Nod
 
 void StereoTracker::processFrame(string left_img_path, string right_img_path, uint64_t timestep)
 {
-    current_matches.clear();
     cv::Mat left_img = cv::imread(left_img_path, IMREAD_GRAYSCALE);
     cv::Mat right_img = cv::imread(right_img_path, IMREAD_GRAYSCALE);
+
+    if (left_img.empty() || right_img.empty())
+    {
+        cerr << "Could not open or find the images!" << endl;
+        return;
+    }
+
+    processFrame(left_img, right_img, timestep);
+}
+
+void StereoTracker::processFrame(cv::Mat left_img, cv::Mat right_img, uint64_t timestep)
+{
+    current_matches.clear();
     vector<cv::Point2f> kept_left_pts;
     vector<int> kept_ids;
     this->keyframe = false;
 
     if (left_img.empty() || right_img.empty())
     {
-        cerr << "Could not open or find the images!" << endl;
+        cerr << "processFrame: received an empty image!" << endl;
         return;
     }
 

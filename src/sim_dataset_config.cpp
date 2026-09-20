@@ -46,14 +46,13 @@ DatasetConfig loadSimDatasetConfig(
     config.R_B_C1 = R_link_to_optical.clone();
     config.t_B_C1 = (cv::Mat_<double>(3, 1) << 0.1, -0.06, 0.0);
 
-    // No separate marker body in sim (unlike EuRoC's vicon0 marker vs.
-    // state_groundtruth_estimate0 body pose) -- ground truth is read
-    // straight from the body origin, so this "extrinsic" is just identity.
+    // Keep as 0 transformation to convert body to vicon
     config.R_B_V = cv::Mat::eye(3, 3, CV_64F);
     config.t_B_V = cv::Mat::zeros(3, 1, CV_64F);
 
     if (ground_truth)
     {
+        // account for initial rotation and translation
         const auto &p = ground_truth->pose.pose.position;
         const auto &q = ground_truth->pose.pose.orientation;
         config.t_gt_0 = Eigen::Vector3d(p.x, p.y, p.z);

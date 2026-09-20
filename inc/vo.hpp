@@ -133,6 +133,7 @@ class StereoTracker : public rclcpp::Node
     public:
         StereoTracker(string nodeName, const DatasetConfig& config);
         void processFrame(string left_img_path, string right_img_path, uint64_t timestep);
+        void processFrame(cv::Mat left_img, cv::Mat right_img, uint64_t timestep); // overload: feed already-decoded frames (e.g. live sim topics) directly, skipping imread
         void visualizeMatch(string left_img_path, string right_img_path);
         void triangulate(cv::Mat& left_img, cv::Mat& right_img, vector<Point2f>& feature_pts, const int numb_features, const cv::Mat& mask, 
                         vector<cv::Point2f>& added_left_pts, vector<int>& added_ids);

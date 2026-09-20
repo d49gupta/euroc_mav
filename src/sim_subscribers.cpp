@@ -9,7 +9,7 @@ SimSubscribers::SimSubscribers() : rclcpp::Node("sim_subscribers")
     // sim/launch/sim.launch.py bridges everything at world/sim rate with
     // use_sim_time set on the bridge node; set it here too so this node's
     // clock/throttled logging line up with the simulation, not wall time.
-    this->declare_parameter<bool>("use_sim_time", true);
+    // this->declare_parameter<bool>("use_sim_time", true);
 
     auto sensor_qos = rclcpp::SensorDataQoS();
 
@@ -23,11 +23,11 @@ SimSubscribers::SimSubscribers() : rclcpp::Node("sim_subscribers")
         "lidar/scan", sensor_qos, std::bind(&SimSubscribers::lidarScanCallback, this, _1));
 
     left_info_sub_ = this->create_subscription<sensor_msgs::msg::CameraInfo>(
-        "stereo/left/camera_info", rclcpp::QoS(10),
+        "stereo/left/camera_info", sensor_qos,
         std::bind(&SimSubscribers::leftCameraInfoCallback, this, _1));
 
     right_info_sub_ = this->create_subscription<sensor_msgs::msg::CameraInfo>(
-        "stereo/right/camera_info", rclcpp::QoS(10),
+        "stereo/right/camera_info", sensor_qos,
         std::bind(&SimSubscribers::rightCameraInfoCallback, this, _1));
 
     // Odometry benefits from a bit more history than the default depth-10

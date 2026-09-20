@@ -56,6 +56,8 @@ add_executable(vio
 add_executable(sim_subscribers
   src/sim_subscribers.cpp
   src/sim_dataset_config.cpp
+  src/math_utils.cpp
+  src/vo.cpp
   core/main_sim_subscribers.cpp
 )
 

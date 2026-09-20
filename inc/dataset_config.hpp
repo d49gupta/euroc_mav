@@ -30,8 +30,6 @@ struct DatasetConfig
     Eigen::Vector3d init_accel_bias;
 };
 
-// dataset_root is the EuRoC sequence directory containing mav0/ (e.g. ".../V1_01_easy/V1_01_easy");
-// first_cam_timestamp anchors the ground-truth rows to whichever frame processing actually starts on
 DatasetConfig loadDatasetConfig(const string& dataset_root, uint64_t first_cam_timestamp);
 
 #endif
